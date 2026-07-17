@@ -4,7 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#101311">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Lift Tracker">
     <title>Lift Tracker</title>
+    <script>
+        try {
+            const appearance = JSON.parse(localStorage.getItem("liftTrackerAppearance") || "{}");
+            if (appearance.mode) document.documentElement.dataset.theme = appearance.mode;
+            if (appearance.accent) document.documentElement.style.setProperty("--accent", appearance.accent);
+        } catch {}
+    </script>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
     <script src="catalog.js" defer></script>
     <script src="script.js" defer></script>
@@ -15,16 +28,20 @@
             <button class="tab active" type="button" data-view="workout-view">Workout</button>
             <button class="tab" type="button" data-view="calendar-view">Calendar</button>
             <button class="tab" type="button" data-view="progress-view">Progress</button>
+            <button class="settings-button" id="open-appearance" type="button" aria-label="Appearance settings">⚙</button>
         </nav>
 
         <section class="app-view active" id="workout-view">
             <header class="page-header">
                 <div>
-                    <p class="eyebrow">Today's workout</p>
+                    <p class="eyebrow" id="workout-date-label">Today's workout</p>
                     <h1 id="workout-title">Push Day</h1>
                     <p class="rotation-position" id="rotation-position"></p>
                 </div>
-                <div class="date" id="workout-date"></div>
+                <div class="viewed-date">
+                    <div class="date" id="workout-date"></div>
+                    <button id="return-today" type="button" hidden>Return to today</button>
+                </div>
             </header>
 
             <section class="up-next" aria-labelledby="up-next-heading">
@@ -39,6 +56,79 @@
                 <div><strong id="completed-count">0/0</strong><span>Exercises</span></div>
                 <div><strong id="set-count">0</strong><span>Sets logged</span></div>
                 <div><strong id="total-volume">0 kg</strong><span>Total volume</span></div>
+            </section>
+
+            <section class="muscle-coverage" id="muscle-coverage" aria-labelledby="muscle-coverage-heading">
+                <div class="section-heading">
+                    <h2 id="muscle-coverage-heading">Muscles hit</h2>
+                    <span>Planned coverage</span>
+                </div>
+                <div class="muscle-content">
+                    <div class="muscle-diagrams" aria-label="Front and back muscle coverage diagrams">
+                        <figure>
+                            <svg class="body-map" viewBox="0 0 180 360" role="img" aria-label="Front muscle diagram">
+                                <circle class="body-base" cx="90" cy="32" r="22"/>
+                                <path class="body-base" d="M65 58 Q90 50 115 58 L128 158 L112 218 L106 338 H76 L68 218 L52 158 Z"/>
+                                <path class="muscle-zone" data-muscle="Shoulders" d="M61 66 Q43 72 40 96 L59 103 72 78Z"><title>Shoulders</title></path>
+                                <path class="muscle-zone" data-muscle="Shoulders" d="M119 66 Q137 72 140 96 L121 103 108 78Z"><title>Shoulders</title></path>
+                                <path class="muscle-zone" data-muscle="Chest" d="M70 76 Q89 68 89 112 L62 108Z"><title>Chest</title></path>
+                                <path class="muscle-zone" data-muscle="Chest" d="M110 76 Q91 68 91 112 L118 108Z"><title>Chest</title></path>
+                                <path class="muscle-zone" data-muscle="Biceps" d="M42 100 L58 105 54 150 38 146Z"><title>Biceps</title></path>
+                                <path class="muscle-zone" data-muscle="Biceps" d="M138 100 L122 105 126 150 142 146Z"><title>Biceps</title></path>
+                                <path class="muscle-zone" data-muscle="Forearms" d="M38 150 L53 154 46 205 31 200Z"><title>Forearms</title></path>
+                                <path class="muscle-zone" data-muscle="Forearms" d="M142 150 L127 154 134 205 149 200Z"><title>Forearms</title></path>
+                                <path class="muscle-zone" data-muscle="Abs" d="M72 116 H108 L110 184 Q90 194 70 184Z"><title>Abs and core</title></path>
+                                <path class="muscle-zone" data-muscle="Obliques" d="M62 112 L72 118 70 184 58 164Z"><title>Obliques</title></path>
+                                <path class="muscle-zone" data-muscle="Obliques" d="M118 112 L108 118 110 184 122 164Z"><title>Obliques</title></path>
+                                <path class="muscle-zone" data-muscle="Quads" d="M65 194 Q76 186 88 198 L83 270 64 269Z"><title>Quadriceps</title></path>
+                                <path class="muscle-zone" data-muscle="Quads" d="M115 194 Q104 186 92 198 L97 270 116 269Z"><title>Quadriceps</title></path>
+                                <path class="muscle-zone" data-muscle="Calves" d="M65 274 L82 274 78 334 62 334Z"><title>Calves</title></path>
+                                <path class="muscle-zone" data-muscle="Calves" d="M115 274 L98 274 102 334 118 334Z"><title>Calves</title></path>
+                            </svg>
+                            <figcaption>Front</figcaption>
+                        </figure>
+                        <figure>
+                            <svg class="body-map" viewBox="0 0 180 360" role="img" aria-label="Back muscle diagram">
+                                <circle class="body-base" cx="90" cy="32" r="22"/>
+                                <path class="body-base" d="M65 58 Q90 50 115 58 L128 158 L112 218 L106 338 H76 L68 218 L52 158 Z"/>
+                                <path class="muscle-zone" data-muscle="Traps" d="M72 58 L90 78 108 58 112 92 68 92Z"><title>Traps</title></path>
+                                <path class="muscle-zone" data-muscle="Rear Delts" d="M64 68 Q43 74 40 98 L60 102 73 82Z"><title>Rear delts</title></path>
+                                <path class="muscle-zone" data-muscle="Rear Delts" d="M116 68 Q137 74 140 98 L120 102 107 82Z"><title>Rear delts</title></path>
+                                <path class="muscle-zone" data-muscle="Lats" d="M66 88 L89 95 84 158 59 142Z"><title>Lats and back</title></path>
+                                <path class="muscle-zone" data-muscle="Lats" d="M114 88 L91 95 96 158 121 142Z"><title>Lats and back</title></path>
+                                <path class="muscle-zone" data-muscle="Triceps" d="M41 101 L58 106 54 151 38 146Z"><title>Triceps</title></path>
+                                <path class="muscle-zone" data-muscle="Triceps" d="M139 101 L122 106 126 151 142 146Z"><title>Triceps</title></path>
+                                <path class="muscle-zone" data-muscle="Lower Back" d="M70 151 H110 L112 184 68 184Z"><title>Lower back</title></path>
+                                <path class="muscle-zone" data-muscle="Glutes" d="M66 184 Q89 174 89 218 L64 220Z"><title>Glutes</title></path>
+                                <path class="muscle-zone" data-muscle="Glutes" d="M114 184 Q91 174 91 218 L116 220Z"><title>Glutes</title></path>
+                                <path class="muscle-zone" data-muscle="Hamstrings" d="M65 221 L88 220 83 272 64 269Z"><title>Hamstrings</title></path>
+                                <path class="muscle-zone" data-muscle="Hamstrings" d="M115 221 L92 220 97 272 116 269Z"><title>Hamstrings</title></path>
+                                <path class="muscle-zone" data-muscle="Calves" d="M65 274 L82 274 78 334 62 334Z"><title>Calves</title></path>
+                                <path class="muscle-zone" data-muscle="Calves" d="M115 274 L98 274 102 334 118 334Z"><title>Calves</title></path>
+                            </svg>
+                            <figcaption>Back</figcaption>
+                        </figure>
+                    </div>
+                    <div class="coverage-lists">
+                        <div><h3>Primary</h3><div class="muscle-chips" id="primary-muscles"></div></div>
+                        <div><h3>Secondary</h3><div class="muscle-chips secondary" id="secondary-muscles"></div></div>
+                    </div>
+                </div>
+                <p class="coverage-note">Based on the catalogue's general exercise classifications, not measured muscle activation.</p>
+            </section>
+
+            <section class="rest-timer" id="rest-timer" aria-label="Rest timer">
+                <div><span>Rest timer</span><strong id="timer-display">01:30</strong></div>
+                <div class="timer-presets">
+                    <button type="button" data-seconds="60">1:00</button>
+                    <button class="active" type="button" data-seconds="90">1:30</button>
+                    <button type="button" data-seconds="120">2:00</button>
+                    <button type="button" data-seconds="180">3:00</button>
+                </div>
+                <div class="timer-actions">
+                    <button id="timer-toggle" type="button">Start</button>
+                    <button id="timer-reset" type="button">Reset</button>
+                </div>
             </section>
 
             <form id="workout-form">
@@ -103,6 +193,16 @@
                 </div>
                 <ol class="split-list" id="split-list"></ol>
                 <p class="split-note">Missing a workout repeats it tomorrow and moves every later day forward.</p>
+                <div class="alignment-controls">
+                    <div>
+                        <strong>Align rotation</strong>
+                        <span>Move the complete schedule without marking a workout missed.</span>
+                    </div>
+                    <div>
+                        <button id="shift-earlier" type="button">← One day earlier</button>
+                        <button id="shift-later" type="button">One day later →</button>
+                    </div>
+                </div>
             </section>
         </section>
 
@@ -160,6 +260,19 @@
                     <span id="completed-workout-count"></span>
                 </div>
                 <div id="recent-workouts"></div>
+            </section>
+
+            <section class="backup-card">
+                <div>
+                    <h2>Data backup</h2>
+                    <p>Export a copy before clearing Safari data, changing the website address or moving to another device.</p>
+                </div>
+                <div class="backup-actions">
+                    <button id="export-backup" type="button">Export backup</button>
+                    <button id="import-backup" type="button">Import backup</button>
+                    <input class="visually-hidden" id="backup-file" type="file" accept="application/json,.json">
+                </div>
+                <p class="backup-status" id="backup-status" role="status" aria-live="polite"></p>
             </section>
         </section>
     </main>
@@ -255,6 +368,41 @@
             <footer class="catalog-footer">
                 <p>Changes apply to the rotation from today onward.</p>
                 <button class="save-catalog" id="save-split" type="button">Save split</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <dialog class="appearance-dialog" id="appearance-dialog">
+        <form class="appearance-editor" id="appearance-form">
+            <header class="catalog-header">
+                <div><p class="eyebrow">Personalise</p><h2>Appearance</h2></div>
+                <button class="close-dialog" id="close-appearance" type="button" aria-label="Close appearance settings">×</button>
+            </header>
+            <div class="appearance-body">
+                <fieldset>
+                    <legend>Display mode</legend>
+                    <div class="mode-options">
+                        <label><input type="radio" name="theme-mode" value="system"> System</label>
+                        <label><input type="radio" name="theme-mode" value="dark"> Dark</label>
+                        <label><input type="radio" name="theme-mode" value="light"> Light</label>
+                        <label><input type="radio" name="theme-mode" value="oled"> OLED black</label>
+                    </div>
+                </fieldset>
+                <fieldset>
+                    <legend>Accent colour</legend>
+                    <div class="accent-options" id="accent-options">
+                        <button type="button" data-accent="#72e586" style="--swatch:#72e586" aria-label="Green"></button>
+                        <button type="button" data-accent="#62a8ff" style="--swatch:#62a8ff" aria-label="Blue"></button>
+                        <button type="button" data-accent="#b58cff" style="--swatch:#b58cff" aria-label="Purple"></button>
+                        <button type="button" data-accent="#ff765f" style="--swatch:#ff765f" aria-label="Red"></button>
+                        <button type="button" data-accent="#ffb454" style="--swatch:#ffb454" aria-label="Orange"></button>
+                        <label class="custom-colour">Custom <input id="custom-accent" type="color" value="#72e586"></label>
+                    </div>
+                </fieldset>
+            </div>
+            <footer class="catalog-footer">
+                <p>Appearance is saved on this device.</p>
+                <button class="save-catalog" id="save-appearance" type="button">Save appearance</button>
             </footer>
         </form>
     </dialog>

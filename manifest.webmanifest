@@ -1,0 +1,16 @@
+{
+    "name": "Lift Tracker",
+    "short_name": "Lift",
+    "description": "Plan rotating workout splits, log sets and track strength progress.",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#101311",
+    "theme_color": "#101311",
+    "orientation": "portrait-primary",
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ]
+}

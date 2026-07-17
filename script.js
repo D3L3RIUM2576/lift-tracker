@@ -23,6 +23,7 @@ const STATE_KEY = "liftTrackerScheduleStateV2";
 const HISTORY_KEY = "liftTrackerWorkoutHistoryV2";
 const DRAFT_PREFIX = "liftTrackerDraftV2:";
 const today = startOfDay(new Date());
+let viewedDate = today;
 let calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
 let state = loadState();
 let history = loadJSON(HISTORY_KEY, {});
@@ -83,7 +84,9 @@ function loadState() {
     });
     return {
         startDate: saved.startDate || dateKey(today),
+        trackingStartDate: saved.trackingStartDate || saved.startDate || dateKey(today),
         startingIndex: saved.startingIndex || 0,
+        scheduleOffset: saved.scheduleOffset || 0,
         splitName: saved.splitName || "Push Pull Legs",
         split: savedSplit,
         exerciseRules: saved.exerciseRules || [],
@@ -101,12 +104,11 @@ function saveHistory() {
 
 function scheduleIndexFor(date) {
     const startDate = dateFromKey(state.startDate);
-    if (date < startDate) return null;
 
     const missedBeforeDate = Object.values(history).filter((entry) => (
         entry.status === "missed" && dateFromKey(entry.date) >= startDate && dateFromKey(entry.date) < date
     )).length;
-    const rawIndex = state.startingIndex + daysBetween(startDate, date) - missedBeforeDate;
+    const rawIndex = state.startingIndex + state.scheduleOffset + daysBetween(startDate, date) - missedBeforeDate;
     return ((rawIndex % state.split.length) + state.split.length) % state.split.length;
 }
 
@@ -185,7 +187,11 @@ function renumberSets(container) {
     });
 }
 
-function createExerciseCard(exercise, savedExercise = {}) {
+function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewedDate) {
+    const previous = previousPerformanceForExercise(exercise.id, referenceDate);
+    const previousSets = previous
+        ? previous.exercise.sets.filter((set) => set.weight > 0 && set.reps > 0).map((set) => `${set.weight} kg × ${set.reps}`).join(" · ")
+        : "No previous session";
     const card = document.createElement("article");
     card.className = "exercise-card";
     card.dataset.exerciseId = exercise.id;
@@ -197,6 +203,10 @@ function createExerciseCard(exercise, savedExercise = {}) {
                 <span aria-hidden="true"></span>
             </label>
         </header>
+        <div class="previous-performance">
+            <span>Previous${previous ? ` · ${formatShortDate(previous.date)}` : ""}</span>
+            <strong>${previousSets}</strong>
+        </div>
         <div class="sets-list"></div>
         <button class="add-set" type="button">+ Add set</button>
     `;
@@ -216,10 +226,59 @@ function createExerciseCard(exercise, savedExercise = {}) {
     return card;
 }
 
+function previousPerformanceForExercise(exerciseId, referenceDate) {
+    return [...completedWorkouts()].reverse().flatMap((workout) => {
+        if (workout.date >= dateKey(referenceDate)) return [];
+        const exercise = workout.exercises.find((item) => item.id === exerciseId);
+        return exercise ? [{ date: workout.date, exercise }] : [];
+    })[0] || null;
+}
+
+function diagramRegionsForMuscle(muscle) {
+    const mappings = {
+        "Upper Chest": ["Chest"], Chest: ["Chest"],
+        Shoulders: ["Shoulders"], "Front Delts": ["Shoulders"], "Side Delts": ["Shoulders"],
+        "Rear Delts": ["Rear Delts"], Traps: ["Traps"],
+        Back: ["Lats", "Traps", "Lower Back"], "Upper Back": ["Lats", "Traps"], Lats: ["Lats"],
+        Biceps: ["Biceps"], Triceps: ["Triceps"], Forearms: ["Forearms"],
+        Abs: ["Abs"], Core: ["Abs", "Obliques"], Obliques: ["Obliques"],
+        Quads: ["Quads"], Adductors: ["Quads"], Hamstrings: ["Hamstrings"],
+        Glutes: ["Glutes"], Calves: ["Calves"], "Lower Back": ["Lower Back"],
+        "Hip Flexors": ["Quads"], "Full Body": ["Shoulders", "Chest", "Lats", "Abs", "Quads", "Hamstrings", "Glutes"]
+    };
+    return mappings[muscle] || [];
+}
+
+function renderMuscleCoverage(exercises) {
+    const primaryCounts = new Map();
+    const secondaryCounts = new Map();
+    exercises.forEach((exercise) => {
+        primaryCounts.set(exercise.primaryMuscle, (primaryCounts.get(exercise.primaryMuscle) || 0) + 1);
+        exercise.secondaryMuscles.forEach((muscle) => {
+            secondaryCounts.set(muscle, (secondaryCounts.get(muscle) || 0) + 1);
+        });
+    });
+    const primary = [...primaryCounts].sort((a, b) => b[1] - a[1]);
+    const secondary = [...secondaryCounts].filter(([muscle]) => !primaryCounts.has(muscle)).sort((a, b) => b[1] - a[1]);
+    const chips = (items) => items.length
+        ? items.map(([muscle, count]) => `<span class="muscle-chip">${escapeHTML(muscle)}${count > 1 ? ` ×${count}` : ""}</span>`).join("")
+        : '<span class="muscle-chip">None</span>';
+    document.querySelector("#primary-muscles").innerHTML = chips(primary);
+    document.querySelector("#secondary-muscles").innerHTML = chips(secondary);
+
+    const primaryRegions = new Set(primary.flatMap(([muscle]) => diagramRegionsForMuscle(muscle)));
+    const secondaryRegions = new Set(secondary.flatMap(([muscle]) => diagramRegionsForMuscle(muscle)));
+    document.querySelectorAll(".muscle-zone").forEach((zone) => {
+        const region = zone.dataset.muscle;
+        zone.classList.toggle("primary-hit", primaryRegions.has(region));
+        zone.classList.toggle("secondary-hit", !primaryRegions.has(region) && secondaryRegions.has(region));
+    });
+}
+
 function readWorkoutFromPage() {
-    const scheduled = workoutForDate(today);
+    const scheduled = workoutForDate(viewedDate);
     return {
-        date: dateKey(today),
+        date: dateKey(viewedDate),
         split: scheduled.name,
         splitIndex: scheduled.index,
         exercises: scheduled.exercises.map((exercise) => {
@@ -237,14 +296,14 @@ function readWorkoutFromPage() {
 }
 
 function saveDraft() {
-    const scheduled = workoutForDate(today);
+    const scheduled = workoutForDate(viewedDate);
     if (scheduled && !scheduled.isRest && exerciseList.children.length) {
-        localStorage.setItem(DRAFT_PREFIX + dateKey(today), JSON.stringify(readWorkoutFromPage()));
+        localStorage.setItem(DRAFT_PREFIX + dateKey(viewedDate), JSON.stringify(readWorkoutFromPage()));
     }
 }
 
 function updateSummary() {
-    const scheduled = workoutForDate(today);
+    const scheduled = workoutForDate(viewedDate);
     if (!scheduled || scheduled.isRest || !exerciseList.children.length) return;
     const workout = readWorkoutFromPage();
     const completed = workout.exercises.filter((exercise) => exercise.completed).length;
@@ -256,47 +315,72 @@ function updateSummary() {
     document.querySelector("#total-volume").textContent = `${volume.toLocaleString()} kg`;
 }
 
+function viewWorkoutDate(date) {
+    viewedDate = startOfDay(date);
+    renderWorkout();
+}
+
 function renderUpcoming() {
     const container = document.querySelector("#upcoming-days");
     container.innerHTML = "";
     for (let offset = 0; offset < 4; offset += 1) {
         const date = addDays(today, offset);
         const scheduled = workoutForDate(date);
-        const card = document.createElement("div");
-        card.className = `upcoming-day${offset === 0 ? " today" : ""}`;
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `upcoming-day${offset === 0 ? " today" : ""}${dateKey(date) === dateKey(viewedDate) ? " selected" : ""}`;
         card.innerHTML = `<span>${offset === 0 ? "Today" : new Intl.DateTimeFormat("en-AU", { weekday: "short" }).format(date)}</span><strong>${escapeHTML(scheduled.name)}</strong>`;
+        card.addEventListener("click", () => viewWorkoutDate(date));
         container.append(card);
     }
 }
 
 function renderWorkout() {
-    const scheduled = workoutForDate(today);
-    const savedDraft = loadJSON(DRAFT_PREFIX + dateKey(today), null);
+    const scheduled = workoutForDate(viewedDate);
+    const key = dateKey(viewedDate);
+    const historicalWorkout = history[key]?.status === "complete" ? history[key] : null;
+    const savedDraft = historicalWorkout || loadJSON(DRAFT_PREFIX + key, null);
+    const isToday = key === dateKey(today);
+    const isFuture = viewedDate > today;
     exerciseList.innerHTML = "";
     statusMessage.textContent = "";
+    document.querySelector("#workout-date-label").textContent = isToday ? "Today's workout" : isFuture ? "Planned workout" : "Past workout";
     document.querySelector("#workout-title").textContent = `${scheduled.name} Day`;
     document.querySelector("#rotation-position").textContent = `Day ${scheduled.index + 1} of ${state.split.length}`;
     document.querySelector("#workout-date").textContent = new Intl.DateTimeFormat("en-AU", {
         weekday: "short", day: "numeric", month: "short"
-    }).format(today);
+    }).format(viewedDate);
+    document.querySelector("#return-today").hidden = isToday;
 
     const isRest = scheduled.isRest;
     workoutForm.hidden = isRest;
     document.querySelector("#workout-summary").hidden = isRest;
+    document.querySelector("#muscle-coverage").hidden = isRest;
+    document.querySelector("#rest-timer").hidden = isRest;
     document.querySelector("#rest-panel").hidden = !isRest;
     if (!isRest) {
         scheduled.exercises.forEach((exercise) => {
             const savedExercise = savedDraft?.exercises?.find((item) => item.id === exercise.id);
-            exerciseList.append(createExerciseCard(exercise, savedExercise));
+            exerciseList.append(createExerciseCard(exercise, savedExercise, viewedDate));
         });
+        renderMuscleCoverage(scheduled.exercises);
         updateSummary();
+        document.querySelector("#workout-actions").hidden = isFuture;
+        document.querySelector("#edit-exercises").hidden = isFuture;
+        if (isFuture) {
+            exerciseList.querySelectorAll("input, button").forEach((control) => { control.disabled = true; });
+            statusMessage.textContent = "Future workout preview. Return on this date to log sets.";
+        } else {
+            document.querySelector(".complete-workout").textContent = isToday ? "Complete Workout" : "Save Past Workout";
+            document.querySelector("#miss-workout").textContent = isToday ? "Missed — Push Split" : "Mark Missed — Push Split";
+        }
     }
     renderUpcoming();
     renderSplitList();
 }
 
 function renderSplitList() {
-    const currentIndex = scheduleIndexFor(today);
+    const currentIndex = scheduleIndexFor(viewedDate);
     document.querySelector("#split-name-label").textContent = state.splitName;
     const list = document.querySelector("#split-list");
     list.innerHTML = "";
@@ -313,6 +397,7 @@ function statusForDate(date, scheduled) {
     const entry = history[key];
     if (entry?.status === "complete") return { className: "complete", symbol: "✓" };
     if (entry?.status === "missed") return { className: "missed", symbol: "×" };
+    if (date < dateFromKey(state.trackingStartDate)) return { className: "planned", symbol: "" };
     if (scheduled.isRest) return { className: "rest", symbol: "☾" };
     if (date < today) return { className: "missed", symbol: "×" };
     return { className: "planned", symbol: "" };
@@ -331,10 +416,12 @@ function renderCalendar() {
     for (let index = 0; index < 42; index += 1) {
         const date = addDays(gridStart, index);
         const scheduled = workoutForDate(date);
-        const cell = document.createElement("div");
+        const cell = document.createElement("button");
+        cell.type = "button";
         const outside = date.getMonth() !== calendarCursor.getMonth();
         const isToday = dateKey(date) === dateKey(today);
-        cell.className = `calendar-day${outside ? " outside" : ""}${isToday ? " today" : ""}`;
+        const isSelected = dateKey(date) === dateKey(viewedDate);
+        cell.className = `calendar-day${outside ? " outside" : ""}${isToday ? " today" : ""}${isSelected ? " selected" : ""}`;
 
         if (!scheduled) {
             cell.innerHTML = `<span class="day-number">${date.getDate()}</span>`;
@@ -346,6 +433,10 @@ function renderCalendar() {
                 <span class="day-status ${status.className}">${status.symbol}</span>
             `;
         }
+        cell.addEventListener("click", () => {
+            viewWorkoutDate(date);
+            showView("workout-view");
+        });
         grid.append(cell);
     }
 }
@@ -553,27 +644,145 @@ document.querySelectorAll(".tab").forEach((tab) => {
 document.querySelector("#progress-exercise").addEventListener("change", renderProgress);
 document.querySelector("#progress-metric").addEventListener("change", renderProgress);
 
+function collectBackupData() {
+    const data = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith("liftTracker")) data[key] = localStorage.getItem(key);
+    }
+    return {
+        app: "lift-tracker",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        data
+    };
+}
+
+function downloadBackup(file) {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = file.name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function exportBackup() {
+    const backup = collectBackupData();
+    const filename = `lift-tracker-backup-${dateKey(today)}.json`;
+    const file = new File([JSON.stringify(backup, null, 2)], filename, { type: "application/json" });
+    const status = document.querySelector("#backup-status");
+
+    try {
+        if (navigator.share && navigator.canShare?.({ files: [file] })) {
+            await navigator.share({
+                files: [file],
+                title: "Lift Tracker backup",
+                text: "Save this file somewhere safe, such as iCloud Drive."
+            });
+            status.textContent = "Backup shared successfully.";
+        } else {
+            downloadBackup(file);
+            status.textContent = `Backup downloaded as ${filename}.`;
+        }
+    } catch (error) {
+        if (error.name === "AbortError") {
+            status.textContent = "Export cancelled.";
+        } else {
+            downloadBackup(file);
+            status.textContent = `Backup downloaded as ${filename}.`;
+        }
+    }
+}
+
+function validateBackup(backup) {
+    if (!backup || backup.app !== "lift-tracker" || backup.version !== 1) {
+        throw new Error("This is not a supported Lift Tracker backup.");
+    }
+    if (!backup.data || typeof backup.data !== "object" || Array.isArray(backup.data)) {
+        throw new Error("The backup does not contain valid tracker data.");
+    }
+    const entries = Object.entries(backup.data);
+    if (!entries.length || entries.some(([key, value]) => !key.startsWith("liftTracker") || typeof value !== "string")) {
+        throw new Error("The backup contains invalid storage entries.");
+    }
+    entries.forEach(([, value]) => JSON.parse(value));
+    return entries;
+}
+
+async function importBackupFile(file) {
+    const status = document.querySelector("#backup-status");
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+        status.textContent = "That file is too large to be a Lift Tracker backup.";
+        return;
+    }
+
+    try {
+        const backup = JSON.parse(await file.text());
+        const entries = validateBackup(backup);
+        const workoutCount = Object.values(JSON.parse(backup.data[HISTORY_KEY] || "{}"))
+            .filter((entry) => entry.status === "complete").length;
+        const confirmed = window.confirm(
+            `Restore this backup from ${new Date(backup.exportedAt).toLocaleString("en-AU")} containing ${workoutCount} completed workout${workoutCount === 1 ? "" : "s"}?\n\nThis will replace the Lift Tracker data currently stored on this device.`
+        );
+        if (!confirmed) {
+            status.textContent = "Import cancelled.";
+            return;
+        }
+
+        const rollback = collectBackupData();
+        try {
+            Object.keys(rollback.data).forEach((key) => localStorage.removeItem(key));
+            entries.forEach(([key, value]) => localStorage.setItem(key, value));
+        } catch (storageError) {
+            Object.keys(backup.data).forEach((key) => localStorage.removeItem(key));
+            Object.entries(rollback.data).forEach(([key, value]) => localStorage.setItem(key, value));
+            throw storageError;
+        }
+
+        window.alert("Backup restored successfully. Lift Tracker will now reload.");
+        window.location.reload();
+    } catch (error) {
+        status.textContent = error instanceof SyntaxError
+            ? "That file is damaged or is not valid JSON."
+            : error.message || "The backup could not be restored.";
+    } finally {
+        document.querySelector("#backup-file").value = "";
+    }
+}
+
+document.querySelector("#export-backup").addEventListener("click", exportBackup);
+document.querySelector("#import-backup").addEventListener("click", () => document.querySelector("#backup-file").click());
+document.querySelector("#backup-file").addEventListener("change", (event) => importBackupFile(event.target.files[0]));
+
 workoutForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const workout = readWorkoutFromPage();
-    history[dateKey(today)] = { ...workout, status: "complete" };
+    history[dateKey(viewedDate)] = { ...workout, status: "complete" };
     saveHistory();
-    localStorage.removeItem(DRAFT_PREFIX + dateKey(today));
-    statusMessage.textContent = "Workout completed — calendar marked green.";
-    renderUpcoming();
+    localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
+    renderWorkout();
+    statusMessage.textContent = viewedDate < today
+        ? "Past workout saved — calendar marked green."
+        : "Workout completed — calendar marked green.";
 });
 
 document.querySelector("#miss-workout").addEventListener("click", () => {
-    const scheduled = workoutForDate(today);
-    if (!window.confirm(`Mark ${scheduled.name} as missed and move the split forward one day?`)) return;
-    history[dateKey(today)] = {
-        date: dateKey(today), status: "missed", split: scheduled.name, splitIndex: scheduled.index
+    const scheduled = workoutForDate(viewedDate);
+    const warning = viewedDate < today ? " This will also recalculate every scheduled day after it." : "";
+    if (!window.confirm(`Mark ${scheduled.name} on ${formatShortDate(dateKey(viewedDate))} as missed and move the split forward one day?${warning}`)) return;
+    history[dateKey(viewedDate)] = {
+        date: dateKey(viewedDate), status: "missed", split: scheduled.name, splitIndex: scheduled.index
     };
     saveHistory();
-    localStorage.removeItem(DRAFT_PREFIX + dateKey(today));
-    statusMessage.textContent = `${scheduled.name} marked missed. It is now scheduled again tomorrow.`;
-    renderUpcoming();
+    localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
+    renderWorkout();
+    statusMessage.textContent = `${scheduled.name} marked missed. It repeats on ${formatShortDate(dateKey(addDays(viewedDate, 1)))}.`;
 });
+
+document.querySelector("#return-today").addEventListener("click", () => viewWorkoutDate(today));
 
 document.querySelector("#previous-month").addEventListener("click", () => {
     calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() - 1, 1);
@@ -590,17 +799,36 @@ document.querySelector("#today-button").addEventListener("click", () => {
     renderCalendar();
 });
 
+function shiftRotation(direction) {
+    const before = workoutForDate(today).name;
+    const change = direction === "earlier" ? 1 : -1;
+    state.scheduleOffset += change;
+    const after = workoutForDate(today).name;
+    const wording = direction === "earlier" ? "one day earlier" : "one day later";
+    if (!window.confirm(`Move the entire ${state.splitName} rotation ${wording}?\n\nToday's scheduled workout will change from ${before} to ${after}. Completed workout history will not be moved.`)) {
+        state.scheduleOffset -= change;
+        return;
+    }
+    saveState();
+    renderWorkout();
+    renderCalendar();
+    statusMessage.textContent = `Rotation shifted ${wording}. Today is now ${after}.`;
+}
+
+document.querySelector("#shift-earlier").addEventListener("click", () => shiftRotation("earlier"));
+document.querySelector("#shift-later").addEventListener("click", () => shiftRotation("later"));
+
 // Exercise catalogue and split editing
 const catalogDialog = document.querySelector("#catalog-dialog");
 let editingDayIndex = 0;
 let selectedExerciseIds = [];
 
-function nextOccurrenceOfDay(dayId) {
+function nextOccurrenceOfDay(dayId, fromDate = viewedDate) {
     for (let offset = 0; offset < 366; offset += 1) {
-        const candidate = addDays(today, offset);
+        const candidate = addDays(fromDate, offset);
         if (workoutForDate(candidate)?.id === dayId) return candidate;
     }
-    return today;
+    return fromDate;
 }
 
 function allExercises() {
@@ -639,7 +867,7 @@ function renderDaySelector() {
 function selectEditingDay(index) {
     editingDayIndex = index;
     const day = state.split[index];
-    const targetDate = nextOccurrenceOfDay(day.id);
+    const targetDate = nextOccurrenceOfDay(day.id, viewedDate);
     selectedExerciseIds = [...exerciseIdsForDate(targetDate, day)];
     document.querySelector("#catalog-day-name").textContent = day.name;
     document.querySelector("#catalog-message").textContent = "";
@@ -748,10 +976,10 @@ function addCustomExercise() {
 }
 
 function openCatalog() {
-    const current = workoutForDate(today);
+    const current = workoutForDate(viewedDate);
     editingDayIndex = current.isRest ? state.split.findIndex((day) => !day.isRest) : current.index;
-    document.querySelector("#range-start").value = dateKey(today);
-    document.querySelector("#range-end").value = dateKey(addDays(today, 28));
+    document.querySelector("#range-start").value = dateKey(viewedDate);
+    document.querySelector("#range-end").value = dateKey(addDays(viewedDate, 28));
     selectEditingDay(editingDayIndex);
     catalogDialog.showModal();
 }
@@ -764,7 +992,7 @@ function saveCatalogSelection() {
 
     const day = state.split[editingDayIndex];
     const scope = document.querySelector('input[name="change-scope"]:checked').value;
-    const targetDate = nextOccurrenceOfDay(day.id);
+    const targetDate = nextOccurrenceOfDay(day.id, viewedDate);
     let successMessage = "";
 
     if (scope === "future") {
@@ -894,12 +1122,142 @@ function saveSplitChanges() {
     state.split = structuredClone(workingSplit);
     state.startDate = dateKey(today);
     state.startingIndex = newCurrentIndex >= 0 ? newCurrentIndex : 0;
+    state.scheduleOffset = 0;
     saveState();
     splitDialog.close();
     renderWorkout();
     renderCalendar();
     statusMessage.textContent = `${splitName} saved. The new rotation starts today.`;
 }
+
+// Rest timer
+let timerDuration = Number(localStorage.getItem("liftTrackerRestTimerSeconds")) || 90;
+let timerRemaining = timerDuration;
+let timerEndAt = null;
+let timerInterval = null;
+
+function formatTimer(seconds) {
+    const safe = Math.max(0, Math.ceil(seconds));
+    return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function renderTimer() {
+    document.querySelector("#timer-display").textContent = timerRemaining > 0 ? formatTimer(timerRemaining) : "DONE";
+    document.querySelector("#timer-toggle").textContent = timerInterval ? "Pause" : timerRemaining > 0 ? "Start" : "Restart";
+    document.querySelectorAll(".timer-presets button").forEach((button) => {
+        button.classList.toggle("active", Number(button.dataset.seconds) === timerDuration);
+    });
+}
+
+function timerTick() {
+    timerRemaining = Math.max(0, Math.ceil((timerEndAt - Date.now()) / 1000));
+    renderTimer();
+    if (timerRemaining === 0) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        timerEndAt = null;
+        navigator.vibrate?.([180, 100, 180]);
+        renderTimer();
+    }
+}
+
+function toggleTimer() {
+    if (timerInterval) {
+        timerTick();
+        clearInterval(timerInterval);
+        timerInterval = null;
+        timerEndAt = null;
+    } else {
+        if (timerRemaining <= 0) timerRemaining = timerDuration;
+        timerEndAt = Date.now() + timerRemaining * 1000;
+        timerInterval = setInterval(timerTick, 250);
+    }
+    renderTimer();
+}
+
+function resetTimer(seconds = timerDuration) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+    timerEndAt = null;
+    timerDuration = seconds;
+    timerRemaining = seconds;
+    localStorage.setItem("liftTrackerRestTimerSeconds", String(seconds));
+    renderTimer();
+}
+
+document.querySelector("#timer-toggle").addEventListener("click", toggleTimer);
+document.querySelector("#timer-reset").addEventListener("click", () => resetTimer());
+document.querySelectorAll(".timer-presets button").forEach((button) => {
+    button.addEventListener("click", () => resetTimer(Number(button.dataset.seconds)));
+});
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && timerInterval) timerTick();
+});
+renderTimer();
+
+// Appearance
+const APPEARANCE_KEY = "liftTrackerAppearance";
+const appearanceDialog = document.querySelector("#appearance-dialog");
+let savedAppearance = loadJSON(APPEARANCE_KEY, { mode: "system", accent: "#72e586" });
+let appearanceDraft = { ...savedAppearance };
+
+function applyAppearance(appearance) {
+    document.documentElement.dataset.theme = appearance.mode;
+    document.documentElement.style.setProperty("--accent", appearance.accent);
+    const light = appearance.mode === "light" || (appearance.mode === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+    document.querySelector('meta[name="theme-color"]').content = light ? "#f3f6f3" : appearance.mode === "oled" ? "#000000" : "#101311";
+}
+
+function renderAppearanceControls() {
+    const radio = document.querySelector(`input[name="theme-mode"][value="${appearanceDraft.mode}"]`);
+    if (radio) radio.checked = true;
+    document.querySelector("#custom-accent").value = appearanceDraft.accent;
+    document.querySelectorAll("#accent-options button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.accent.toLowerCase() === appearanceDraft.accent.toLowerCase());
+    });
+}
+
+function openAppearance() {
+    appearanceDraft = { ...savedAppearance };
+    renderAppearanceControls();
+    appearanceDialog.showModal();
+}
+
+function closeAppearance() {
+    applyAppearance(savedAppearance);
+    appearanceDialog.close();
+}
+
+function saveAppearance() {
+    savedAppearance = { ...appearanceDraft };
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(savedAppearance));
+    applyAppearance(savedAppearance);
+    appearanceDialog.close();
+}
+
+document.querySelector("#open-appearance").addEventListener("click", openAppearance);
+document.querySelector("#close-appearance").addEventListener("click", closeAppearance);
+document.querySelector("#save-appearance").addEventListener("click", saveAppearance);
+document.querySelector("#appearance-form").addEventListener("submit", (event) => event.preventDefault());
+document.querySelectorAll('input[name="theme-mode"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+        appearanceDraft.mode = radio.value;
+        applyAppearance(appearanceDraft);
+    });
+});
+document.querySelectorAll("#accent-options button").forEach((button) => {
+    button.addEventListener("click", () => {
+        appearanceDraft.accent = button.dataset.accent;
+        applyAppearance(appearanceDraft);
+        renderAppearanceControls();
+    });
+});
+document.querySelector("#custom-accent").addEventListener("input", (event) => {
+    appearanceDraft.accent = event.target.value;
+    applyAppearance(appearanceDraft);
+    renderAppearanceControls();
+});
+applyAppearance(savedAppearance);
 
 document.querySelector("#edit-exercises").addEventListener("click", openCatalog);
 document.querySelector("#manage-exercises").addEventListener("click", openCatalog);
@@ -926,3 +1284,11 @@ populateCatalogFilters();
 
 saveState();
 renderWorkout();
+
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./service-worker.js").catch((error) => {
+            console.warn("Offline mode could not be enabled:", error);
+        });
+    });
+}
