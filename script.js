@@ -178,15 +178,24 @@ function scheduleSnapshot() {
     return { state: structuredClone(state), history: structuredClone(history) };
 }
 
-function offerScheduleUndo(message, snapshot) {
+function dismissScheduleUndo() {
+    const toast = document.querySelector("#undo-toast");
+    toast.classList.add("leaving");
+    setTimeout(() => {
+        scheduleUndo = null;
+        toast.hidden = true;
+        toast.classList.remove("leaving");
+    }, 320);
+}
+
+function offerScheduleUndo(message, snapshot, duration = 8000) {
     scheduleUndo = snapshot;
     clearTimeout(scheduleUndoTimer);
     document.querySelector("#undo-message").textContent = message;
-    document.querySelector("#undo-toast").hidden = false;
-    scheduleUndoTimer = setTimeout(() => {
-        scheduleUndo = null;
-        document.querySelector("#undo-toast").hidden = true;
-    }, 12000);
+    const toast = document.querySelector("#undo-toast");
+    toast.classList.remove("leaving");
+    toast.hidden = false;
+    scheduleUndoTimer = setTimeout(dismissScheduleUndo, duration);
 }
 
 document.querySelector("#undo-schedule").addEventListener("click", () => {
@@ -322,7 +331,7 @@ function suggestedTarget(exercise, previous) {
 }
 
 function plateResult(total, bar) {
-    const plates = weightUnit === "lb" ? [45, 35, 25, 10, 5, 2.5] : [25, 20, 15, 10, 5, 2.5, 1.25];
+    const plates = weightUnit === "lb" ? [45, 35, 25, 10, 5, 2.5] : [20, 15, 10, 5, 2.5, 1.25];
     let remaining = Math.max(0, (total - bar) / 2);
     const loaded = [];
     plates.forEach((plate) => {
@@ -384,8 +393,8 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
         </div>
         <div class="sets-list"></div>
         <div class="exercise-card-tools"><button class="add-set" type="button">+ Add set</button>${savedAppearance.showExerciseRest === true ? `<button class="exercise-rest-suggestion" type="button" data-seconds="${restSeconds}">Suggested rest ${Math.floor(restSeconds / 60)}:${String(restSeconds % 60).padStart(2, "0")}</button>` : ""}</div>
-        ${exercise.equipment === "Barbell" ? `<details class="plate-calculator"><summary>Plate calculator</summary><div><label>Total weight (${weightUnit})<input class="plate-total" type="number" min="0" step="0.5" value="${targetWeight ? Number(displayWeight(targetWeight).toFixed(2)) : ""}"></label><label>Bar (${weightUnit})<input class="plate-bar" type="number" min="0" step="0.5" value="${weightUnit === "lb" ? 45 : 20}"></label><p class="plate-result">Enter a target weight.</p></div></details>` : ""}
-        <details class="exercise-notes"><summary>Exercise notes</summary><textarea maxlength="500" placeholder="Setup, form cues, seat position…">${escapeHTML(notes[exercise.id] || savedExercise.note || "")}</textarea></details>
+        ${exercise.equipment === "Barbell" && savedAppearance.showPlateCalculator === true ? `<details class="plate-calculator"><summary>Plate calculator</summary><div><label>Total weight (${weightUnit})<input class="plate-total" type="number" min="0" step="0.5" value="${targetWeight ? Number(displayWeight(targetWeight).toFixed(2)) : ""}"></label><label>Bar (${weightUnit})<input class="plate-bar" type="number" min="0" step="0.5" value="${weightUnit === "lb" ? 45 : 20}"></label><p class="plate-result">Enter a target weight.</p></div></details>` : ""}
+        ${savedAppearance.showExerciseNotes === true ? `<details class="exercise-notes"><summary>Exercise notes</summary><textarea maxlength="500" placeholder="Setup, form cues, seat position…">${escapeHTML(notes[exercise.id] || savedExercise.note || "")}</textarea></details>` : ""}
     `;
 
     const setsContainer = card.querySelector(".sets-list");
@@ -419,7 +428,7 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
     card.querySelectorAll(".plate-calculator input").forEach((input) => input.addEventListener("input", updatePlates));
     updatePlates();
     const noteInput = card.querySelector(".exercise-notes textarea");
-    noteInput.addEventListener("input", () => {
+    noteInput?.addEventListener("input", () => {
         const savedNotes = loadJSON(EXERCISE_NOTES_KEY, {});
         if (noteInput.value.trim()) savedNotes[exercise.id] = noteInput.value;
         else delete savedNotes[exercise.id];
@@ -1087,6 +1096,12 @@ function renderProgressChart(sessions) {
         : selected.length ? "First recorded entry" : "";
 }
 
+const progressListLimits = { history: 5, recent: 5, bodyweight: 5 };
+function progressMoreButton(type, total) {
+    const shown = Math.min(progressListLimits[type], total);
+    return shown < total ? `<button class="progress-show-more" type="button" data-list="${type}">Show 5 more <span>${shown} of ${total}</span></button>` : "";
+}
+
 function renderExerciseHistory(sessions) {
     const container = document.querySelector("#exercise-history");
     document.querySelector("#history-count").textContent = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
@@ -1094,13 +1109,14 @@ function renderExerciseHistory(sessions) {
         container.innerHTML = '<p class="empty-history">No completed sets recorded for this exercise yet.</p>';
         return;
     }
-    container.innerHTML = [...sessions].reverse().map((session) => `
+    container.innerHTML = [...sessions].reverse().slice(0, progressListLimits.history).map((session) => `
         <article class="history-session">
             <div class="history-date"><strong>${formatShortDate(session.date)}</strong><small>${escapeHTML(session.split || "Workout")}</small></div>
             <div class="history-sets">${session.sets.map((set) => `<span>${formatWeight(set.weight)} × ${set.reps}</span>`).join("")}</div>
             <div class="history-best"><strong>${session.estimated1RM > 0 ? formatWeight(session.estimated1RM) : "—"}</strong><small>estimated 1RM</small></div>
         </article>
-    `).join("");
+    `).join("") + progressMoreButton("history", sessions.length);
+    container.querySelector(".progress-show-more")?.addEventListener("click", () => { progressListLimits.history += 5; renderExerciseHistory(sessions); });
 }
 
 function renderRecentWorkouts() {
@@ -1111,12 +1127,13 @@ function renderRecentWorkouts() {
         container.innerHTML = '<p class="empty-history">Completed workouts will appear here.</p>';
         return;
     }
-    container.innerHTML = workouts.slice(0, 10).map((workout) => {
+    container.innerHTML = workouts.slice(0, progressListLimits.recent).map((workout) => {
         const sets = workout.exercises.flatMap((exercise) => exercise.sets).filter((set) => set.weight > 0 && set.reps > 0);
         const volume = sets.reduce((sum, set) => sum + set.weight * set.reps, 0);
         const duration = workout.sessionDurationSeconds > 0 ? ` · ${formatSessionTime(workout.sessionDurationSeconds)}` : "";
         return `<article class="recent-workout"><div><strong>${escapeHTML(workout.split)} Day</strong><small>${formatShortDate(workout.date)}</small></div><div class="recent-workout-stats">${sets.length} sets · ${formatVolume(volume)}${duration}</div></article>`;
-    }).join("");
+    }).join("") + progressMoreButton("recent", workouts.length);
+    container.querySelector(".progress-show-more")?.addEventListener("click", () => { progressListLimits.recent += 5; renderRecentWorkouts(); });
 }
 
 function workoutVolume(workout) {
@@ -1295,13 +1312,14 @@ function renderBodyweightHistory() {
     const change = entries.length > 1 ? entries.at(-1).weight - entries[0].weight : 0;
     document.querySelector("#bodyweight-change").textContent = entries.length > 1 ? `${displayWeight(change) >= 0 ? "+" : ""}${displayWeight(change).toFixed(1)} ${weightUnit} overall` : "";
     document.querySelector("#bodyweight-history").innerHTML = entries.length
-        ? [...entries].reverse().slice(0, 12).map((entry) => `<div class="bodyweight-entry"><span>${formatShortDate(entry.date)}</span><strong>${formatWeight(entry.weight)}</strong><button type="button" data-date="${entry.date}" aria-label="Delete bodyweight entry">×</button></div>`).join("")
+        ? [...entries].reverse().slice(0, progressListLimits.bodyweight).map((entry) => `<div class="bodyweight-entry"><span>${formatShortDate(entry.date)}</span><strong>${formatWeight(entry.weight)}</strong><button type="button" data-date="${entry.date}" aria-label="Delete bodyweight entry">×</button></div>`).join("") + progressMoreButton("bodyweight", entries.length)
         : '<p class="empty-history">No bodyweight entries yet.</p>';
     document.querySelectorAll(".bodyweight-entry button").forEach((button) => button.addEventListener("click", () => {
         const updated = loadJSON(BODYWEIGHT_KEY, []).filter((entry) => entry.date !== button.dataset.date);
         localStorage.setItem(BODYWEIGHT_KEY, JSON.stringify(updated));
         renderProgress();
     }));
+    document.querySelector("#bodyweight-history .progress-show-more")?.addEventListener("click", () => { progressListLimits.bodyweight += 5; renderBodyweightHistory(); });
 }
 
 function renderTrainingPhases() {
@@ -1516,6 +1534,10 @@ document.querySelectorAll(".tab").forEach((tab) => {
 });
 window.addEventListener("resize", updateTabIndicator);
 setTimeout(updateTabIndicator, 0);
+const backToTopButton = document.querySelector("#back-to-top");
+function updateBackToTop() { backToTopButton.hidden = window.scrollY < 520; }
+window.addEventListener("scroll", updateBackToTop, { passive: true });
+backToTopButton.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 document.querySelector("#progress-exercise").addEventListener("change", renderProgress);
 document.querySelector("#progress-metric").addEventListener("change", renderProgress);
@@ -1856,7 +1878,7 @@ document.querySelector("#skip-rest-day").addEventListener("click", () => {
     renderWorkout();
     renderCalendar();
     statusMessage.textContent = `Rest skipped. ${workoutForDate(viewedDate).name} is now scheduled today.`;
-    offerScheduleUndo("Rest day skipped.", undo);
+    offerScheduleUndo("Rest day skipped.", undo, 4500);
 });
 
 document.querySelector("#return-today").addEventListener("click", () => { miniCalendarOffset = 0; viewWorkoutDate(today); });
@@ -1882,7 +1904,7 @@ document.querySelector("#today-button").addEventListener("click", () => {
 function shiftRotation(direction) {
     const undo = scheduleSnapshot();
     const before = workoutForDate(today).name;
-    const change = direction === "earlier" ? 1 : -1;
+    const change = direction === "earlier" ? -1 : 1;
     const preservePrevious = document.querySelector("#preserve-previous-dates").checked;
     const adjustment = { effectiveDate: dateKey(today), delta: change };
     if (preservePrevious) state.scheduleAdjustments.push(adjustment);
@@ -1977,6 +1999,7 @@ function renderCatalog() {
     const exercises = allExercises();
     const matches = exercises.filter(exerciseMatchesFilters);
     document.querySelector("#catalog-count").textContent = `${matches.length} of ${exercises.length} exercises`;
+    document.querySelector("#catalog-count-summary").textContent = `${matches.length}`;
     const container = document.querySelector("#exercise-catalog");
     container.innerHTML = "";
     matches.forEach((exercise) => {
@@ -2069,6 +2092,8 @@ function openCatalog() {
     document.querySelector("#range-start").value = dateKey(viewedDate);
     document.querySelector("#range-end").value = dateKey(addDays(viewedDate, 28));
     document.querySelector("#change-scope-details").open = window.innerWidth > 760;
+    document.querySelector("#catalog-results-details").open = true;
+    document.querySelector("#selected-panel-details").open = window.innerWidth > 760;
     selectEditingDay(editingDayIndex);
     catalogDialog.showModal();
 }
@@ -2364,9 +2389,11 @@ const appearanceDialog = document.querySelector("#appearance-dialog");
 let savedAppearance = {
     mode: "system",
     accent: "#72e586",
-    showRestTimer: true,
+    showRestTimer: false,
     showSessionTimer: false,
     showExerciseRest: false,
+    showExerciseNotes: false,
+    showPlateCalculator: false,
     texture: "none",
     showRecapPopup: true,
     recapTiming: "weekly",
@@ -2398,6 +2425,8 @@ function renderAppearanceControls() {
     document.querySelector("#show-rest-timer").checked = appearanceDraft.showRestTimer;
     document.querySelector("#show-session-timer").checked = appearanceDraft.showSessionTimer;
     document.querySelector("#show-exercise-rest").checked = appearanceDraft.showExerciseRest === true;
+    document.querySelector("#show-exercise-notes").checked = appearanceDraft.showExerciseNotes === true;
+    document.querySelector("#show-plate-calculator").checked = appearanceDraft.showPlateCalculator === true;
     const textureRadio = document.querySelector(`input[name="background-texture"][value="${appearanceDraft.texture || "none"}"]`);
     if (textureRadio) textureRadio.checked = true;
     document.querySelector("#show-recap-popup").checked = appearanceDraft.showRecapPopup !== false;
@@ -2468,6 +2497,8 @@ document.querySelector("#show-session-timer").addEventListener("change", (event)
     updateToolVisibility(appearanceDraft);
 });
 document.querySelector("#show-exercise-rest").addEventListener("change", (event) => { appearanceDraft.showExerciseRest = event.target.checked; });
+document.querySelector("#show-exercise-notes").addEventListener("change", (event) => { appearanceDraft.showExerciseNotes = event.target.checked; });
+document.querySelector("#show-plate-calculator").addEventListener("change", (event) => { appearanceDraft.showPlateCalculator = event.target.checked; });
 document.querySelector("#show-recap-popup").addEventListener("change", (event) => { appearanceDraft.showRecapPopup = event.target.checked; });
 document.querySelector("#recap-timing").addEventListener("change", (event) => { appearanceDraft.recapTiming = event.target.value; });
 applyAppearance(savedAppearance);
@@ -2531,6 +2562,8 @@ function openOnboarding() {
     document.querySelector("#onboarding-rest-timer").checked = savedAppearance.showRestTimer;
     document.querySelector("#onboarding-session-timer").checked = savedAppearance.showSessionTimer;
     document.querySelector("#onboarding-exercise-rest").checked = savedAppearance.showExerciseRest === true;
+    document.querySelector("#onboarding-exercise-notes").checked = savedAppearance.showExerciseNotes === true;
+    document.querySelector("#onboarding-plate-calculator").checked = savedAppearance.showPlateCalculator === true;
     document.querySelector("#onboarding-recap-popup").checked = savedAppearance.showRecapPopup !== false;
     document.querySelector("#onboarding-recap-timing").value = savedAppearance.recapTiming === "split" ? "split-rest" : savedAppearance.recapTiming || "weekly";
     const goalSelect = document.querySelector("#onboarding-goal-exercise");
@@ -2583,6 +2616,8 @@ function finishOnboarding() {
         showRestTimer: document.querySelector("#onboarding-rest-timer").checked,
         showSessionTimer: document.querySelector("#onboarding-session-timer").checked,
         showExerciseRest: document.querySelector("#onboarding-exercise-rest").checked,
+        showExerciseNotes: document.querySelector("#onboarding-exercise-notes").checked,
+        showPlateCalculator: document.querySelector("#onboarding-plate-calculator").checked,
         showRecapPopup: document.querySelector("#onboarding-recap-popup").checked,
         recapTiming: document.querySelector("#onboarding-recap-timing").value
     };

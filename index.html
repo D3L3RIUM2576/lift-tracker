@@ -422,6 +422,7 @@
             </section>
         </section>
     </main>
+    <button class="back-to-top" id="back-to-top" type="button" hidden aria-label="Back to the top of this section">↑ Top</button>
 
     <dialog class="catalog-dialog" id="catalog-dialog">
         <form method="dialog" class="catalog-shell" id="catalog-form">
@@ -448,15 +449,16 @@
 
             <div class="catalog-layout">
                 <aside class="day-selector" aria-label="Workout day to edit" id="day-selector"></aside>
-                <section class="catalog-results">
+                <details class="catalog-results" id="catalog-results-details" open>
+                    <summary>Exercise list <span id="catalog-count-summary"></span></summary>
                     <div class="catalog-count" id="catalog-count"></div>
                     <div class="exercise-catalog" id="exercise-catalog"></div>
-                </section>
-                <aside class="selected-panel">
-                    <h3>Rearrange selected exercises <span id="selected-count">0</span></h3>
+                </details>
+                <details class="selected-panel" id="selected-panel-details" open>
+                    <summary>Rearrange selected exercises <span id="selected-count">0</span></summary>
                     <p>Use the arrows to set their workout order.</p>
                     <ol class="selected-exercises" id="selected-exercises"></ol>
-                </aside>
+                </details>
             </div>
 
             <details class="custom-exercise-form">
@@ -561,6 +563,8 @@
                         <label><input id="show-rest-timer" type="checkbox"> Show floating rest timer</label>
                         <label><input id="show-session-timer" type="checkbox"> Show session length timer</label>
                         <label><input id="show-exercise-rest" type="checkbox"> Show suggested rest time on each exercise</label>
+                        <label><input id="show-exercise-notes" type="checkbox"> Show exercise notes</label>
+                        <label><input id="show-plate-calculator" type="checkbox"> Show plate calculator for barbell exercises</label>
                     </div>
                 </fieldset>
                 <fieldset>
@@ -590,7 +594,7 @@
                     <p class="form-message" id="reset-message" role="status"></p>
                 </section>
             </div>
-            <footer class="catalog-footer">
+            <footer class="catalog-footer appearance-save-dock">
                 <p>Appearance is saved on this device.</p>
                 <button class="save-catalog" id="save-appearance" type="button">Save appearance</button>
             </footer>
@@ -647,7 +651,7 @@
             </div>
             <div class="onboarding-step" data-step="4" hidden>
                 <p class="eyebrow">Step 4 of 4</p><h2>Workout tools</h2>
-                <fieldset><legend>Timers</legend><label><input id="onboarding-rest-timer" type="checkbox" checked> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label><label><input id="onboarding-exercise-rest" type="checkbox"> Show small suggested rest times on exercises</label></fieldset>
+                <fieldset><legend>Workout tools</legend><label><input id="onboarding-rest-timer" type="checkbox"> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label><label><input id="onboarding-exercise-rest" type="checkbox"> Show small suggested rest times on exercises</label><label><input id="onboarding-exercise-notes" type="checkbox"> Show exercise notes</label><label><input id="onboarding-plate-calculator" type="checkbox"> Show barbell plate calculators</label></fieldset>
                 <fieldset><legend>Recaps</legend><label><input id="onboarding-recap-popup" type="checkbox" checked> Show my saved training recap automatically</label><label class="onboarding-field"><span>Recap timing</span><select id="onboarding-recap-timing"><option value="weekly">End of each week</option><option value="split-end">After the final workout in each split</option><option value="split-rest">On the rest day at the end of a split</option></select></label></fieldset>
             </div>
             <p class="form-message" id="onboarding-message" role="alert"></p>

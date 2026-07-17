@@ -1,4 +1,4 @@
-const CACHE_NAME = "lift-tracker-v24";
+const CACHE_NAME = "lift-tracker-v27";
 const APP_FILES = [
     "./",
     "./index.html",
