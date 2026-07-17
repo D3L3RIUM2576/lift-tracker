@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101311">
+    <title>Lift Tracker</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="catalog.js" defer></script>
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <main class="app-shell">
+        <nav class="view-tabs" aria-label="App sections">
+            <button class="tab active" type="button" data-view="workout-view">Workout</button>
+            <button class="tab" type="button" data-view="calendar-view">Calendar</button>
+            <button class="tab" type="button" data-view="progress-view">Progress</button>
+        </nav>
+
+        <section class="app-view active" id="workout-view">
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">Today's workout</p>
+                    <h1 id="workout-title">Push Day</h1>
+                    <p class="rotation-position" id="rotation-position"></p>
+                </div>
+                <div class="date" id="workout-date"></div>
+            </header>
+
+            <section class="up-next" aria-labelledby="up-next-heading">
+                <div class="section-heading">
+                    <h2 id="up-next-heading">Coming up</h2>
+                    <span>Rotating split</span>
+                </div>
+                <div class="upcoming-days" id="upcoming-days"></div>
+            </section>
+
+            <section class="summary" id="workout-summary" aria-label="Workout summary">
+                <div><strong id="completed-count">0/0</strong><span>Exercises</span></div>
+                <div><strong id="set-count">0</strong><span>Sets logged</span></div>
+                <div><strong id="total-volume">0 kg</strong><span>Total volume</span></div>
+            </section>
+
+            <form id="workout-form">
+                <section aria-labelledby="exercises-heading">
+                <div class="section-heading">
+                    <h2 id="exercises-heading">Exercises</h2>
+                    <button class="edit-exercises" id="edit-exercises" type="button">Edit exercises</button>
+                    </div>
+                    <div id="exercise-list"></div>
+                </section>
+
+                <div class="workout-actions" id="workout-actions">
+                    <button class="miss-workout" id="miss-workout" type="button">Missed — Push Split</button>
+                    <button class="complete-workout" type="submit">Complete Workout</button>
+                </div>
+                <p class="status-message" id="status-message" role="status" aria-live="polite"></p>
+            </form>
+
+            <section class="rest-panel" id="rest-panel" hidden>
+                <div class="rest-icon">☾</div>
+                <h2>Recovery day</h2>
+                <p>Your next training day is shown below. Rest days advance automatically.</p>
+            </section>
+        </section>
+
+        <section class="app-view" id="calendar-view" hidden>
+            <header class="calendar-header">
+                <div>
+                    <p class="eyebrow">Training history</p>
+                    <h1>Calendar</h1>
+                </div>
+                <button class="today-button" id="today-button" type="button">Today</button>
+            </header>
+
+            <div class="calendar-controls">
+                <button id="previous-month" type="button" aria-label="Previous month">‹</button>
+                <h2 id="calendar-month"></h2>
+                <button id="next-month" type="button" aria-label="Next month">›</button>
+            </div>
+
+            <div class="calendar-weekdays" aria-hidden="true">
+                <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span>
+                <span>Fri</span><span>Sat</span><span>Sun</span>
+            </div>
+            <div class="calendar-grid" id="calendar-grid"></div>
+
+            <div class="calendar-legend">
+                <span><i class="legend-dot complete"></i> Complete</span>
+                <span><i class="legend-dot missed"></i> Missed</span>
+                <span><i class="legend-dot rest"></i> Rest</span>
+                <span><i class="legend-dot planned"></i> Planned</span>
+            </div>
+
+            <section class="split-card">
+                <div class="section-heading">
+                    <h2>Current rotation</h2>
+                    <div class="split-buttons">
+                        <span class="split-title" id="split-name-label"></span>
+                        <button class="edit-exercises" id="manage-exercises" type="button">Exercises</button>
+                        <button class="edit-exercises" id="edit-split" type="button">Edit split</button>
+                    </div>
+                </div>
+                <ol class="split-list" id="split-list"></ol>
+                <p class="split-note">Missing a workout repeats it tomorrow and moves every later day forward.</p>
+            </section>
+        </section>
+
+        <section class="app-view" id="progress-view" hidden>
+            <header class="progress-header">
+                <div>
+                    <p class="eyebrow">Strength analytics</p>
+                    <h1>Progress</h1>
+                </div>
+            </header>
+
+            <section class="progress-controls" aria-label="Progress filters">
+                <label>Exercise
+                    <select id="progress-exercise"></select>
+                </label>
+                <label>Graph metric
+                    <select id="progress-metric">
+                        <option value="estimated1RM">Estimated 1RM</option>
+                        <option value="maxWeight">Best weight</option>
+                        <option value="volume">Session volume</option>
+                        <option value="maxReps">Best set reps</option>
+                    </select>
+                </label>
+            </section>
+
+            <section class="record-grid" aria-label="Personal records">
+                <article><span>Estimated 1RM</span><strong id="record-one-rm">—</strong><small id="record-one-rm-date"></small></article>
+                <article><span>Heaviest weight</span><strong id="record-weight">—</strong><small id="record-weight-date"></small></article>
+                <article><span>Best set volume</span><strong id="record-set-volume">—</strong><small id="record-set-volume-date"></small></article>
+                <article><span>Most reps</span><strong id="record-reps">—</strong><small id="record-reps-date"></small></article>
+            </section>
+
+            <section class="chart-card">
+                <div class="section-heading">
+                    <h2 id="chart-title">Estimated 1RM</h2>
+                    <span id="chart-change"></span>
+                </div>
+                <div class="chart-wrap" id="chart-wrap">
+                    <svg id="progress-chart" viewBox="0 0 700 300" role="img" aria-labelledby="chart-title"></svg>
+                    <p class="chart-empty" id="chart-empty">Complete workouts to build your progress graph.</p>
+                </div>
+            </section>
+
+            <section class="history-card">
+                <div class="section-heading">
+                    <h2>Exercise history</h2>
+                    <span id="history-count">0 sessions</span>
+                </div>
+                <div class="exercise-history" id="exercise-history"></div>
+            </section>
+
+            <section class="recent-workouts-card">
+                <div class="section-heading">
+                    <h2>Recent completed workouts</h2>
+                    <span id="completed-workout-count"></span>
+                </div>
+                <div id="recent-workouts"></div>
+            </section>
+        </section>
+    </main>
+
+    <dialog class="catalog-dialog" id="catalog-dialog">
+        <form method="dialog" class="catalog-shell" id="catalog-form">
+            <header class="catalog-header">
+                <div>
+                    <p class="eyebrow">Exercise catalogue</p>
+                    <h2>Edit <span id="catalog-day-name">Push</span> Day</h2>
+                </div>
+                <button class="close-dialog" id="close-catalog" type="button" aria-label="Close exercise catalogue">×</button>
+            </header>
+
+            <div class="catalog-toolbar">
+                <label class="search-box">
+                    <span class="visually-hidden">Search exercises</span>
+                    <input id="exercise-search" type="search" placeholder="Search exercises or muscles…">
+                </label>
+                <select id="muscle-filter" aria-label="Filter by muscle">
+                    <option value="all">All muscles</option>
+                </select>
+                <select id="equipment-filter" aria-label="Filter by equipment">
+                    <option value="all">All equipment</option>
+                </select>
+            </div>
+
+            <div class="catalog-layout">
+                <aside class="day-selector" aria-label="Workout day to edit" id="day-selector"></aside>
+                <section class="catalog-results">
+                    <div class="catalog-count" id="catalog-count"></div>
+                    <div class="exercise-catalog" id="exercise-catalog"></div>
+                </section>
+                <aside class="selected-panel">
+                    <h3>Selected <span id="selected-count">0</span></h3>
+                    <ol class="selected-exercises" id="selected-exercises"></ol>
+                </aside>
+            </div>
+
+            <details class="custom-exercise-form">
+                <summary>+ Add your own exercise</summary>
+                <div class="custom-exercise-fields">
+                    <label>Name <input id="custom-exercise-name" type="text" maxlength="60" placeholder="e.g. Belt Squat"></label>
+                    <label>Primary muscle <input id="custom-exercise-muscle" type="text" maxlength="40" placeholder="e.g. Quads"></label>
+                    <label>Equipment <input id="custom-exercise-equipment" type="text" maxlength="40" placeholder="e.g. Machine"></label>
+                    <label>Secondary muscles <input id="custom-exercise-secondary" type="text" maxlength="100" placeholder="Comma separated"></label>
+                    <button id="add-custom-exercise" type="button">Add to catalogue</button>
+                </div>
+                <p class="inline-message" id="custom-exercise-message"></p>
+            </details>
+
+            <section class="change-scope">
+                <h3>Apply these changes</h3>
+                <div class="scope-options">
+                    <label><input type="radio" name="change-scope" value="future" checked> All current and future rotations</label>
+                    <label><input type="radio" name="change-scope" value="once"> This workout only</label>
+                    <label><input type="radio" name="change-scope" value="interval"> Repeat every <input id="interval-weeks" type="number" min="2" max="52" value="2"> weeks</label>
+                    <label><input type="radio" name="change-scope" value="range"> Custom date range</label>
+                </div>
+                <div class="range-fields" id="range-fields" hidden>
+                    <label>From <input id="range-start" type="date"></label>
+                    <label>To <input id="range-end" type="date"></label>
+                </div>
+            </section>
+
+            <footer class="catalog-footer">
+                <p id="catalog-message" role="status"></p>
+                <button class="save-catalog" id="save-catalog" type="button">Save exercise selection</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <dialog class="split-dialog" id="split-dialog">
+        <form class="split-editor" id="split-form">
+            <header class="catalog-header">
+                <div><p class="eyebrow">Rotation builder</p><h2>Edit training split</h2></div>
+                <button class="close-dialog" id="close-split" type="button" aria-label="Close split editor">×</button>
+            </header>
+
+            <div class="split-editor-body">
+                <label class="split-name-field">Split name
+                    <input id="custom-split-name" type="text" maxlength="50" placeholder="e.g. Jordan's PPL">
+                </label>
+                <p class="editor-help">Reorder days with the arrows. Workout days can be renamed; rest days can be placed anywhere.</p>
+                <ol class="editable-days" id="editable-days"></ol>
+                <div class="add-day-buttons">
+                    <button id="add-workout-day" type="button">+ Workout day</button>
+                    <button id="add-rest-day" type="button">+ Rest day</button>
+                </div>
+                <p class="inline-message" id="split-editor-message"></p>
+            </div>
+
+            <footer class="catalog-footer">
+                <p>Changes apply to the rotation from today onward.</p>
+                <button class="save-catalog" id="save-split" type="button">Save split</button>
+            </footer>
+        </form>
+    </dialog>
+</body>
+</html>
