@@ -22,6 +22,12 @@ const catalogById = new Map(EXERCISE_CATALOG.map((exercise) => [exercise.id, exe
 const STATE_KEY = "liftTrackerScheduleStateV2";
 const HISTORY_KEY = "liftTrackerWorkoutHistoryV2";
 const DRAFT_PREFIX = "liftTrackerDraftV2:";
+const BODYWEIGHT_KEY = "liftTrackerBodyweightV1";
+const PHASES_KEY = "liftTrackerTrainingPhasesV1";
+const GOALS_KEY = "liftTrackerStrengthGoalsV1";
+const PROGRESS_LAYOUT_KEY = "liftTrackerProgressLayoutV1";
+const UNIT_KEY = "liftTrackerWeightUnitV1";
+let weightUnit = loadJSON(UNIT_KEY, "kg");
 const today = startOfDay(new Date());
 let viewedDate = today;
 let calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -74,6 +80,23 @@ function escapeHTML(value) {
     })[character]);
 }
 
+function displayWeight(kg) {
+    return weightUnit === "lb" ? Number(kg) * 2.2046226218 : Number(kg);
+}
+
+function storedWeight(value) {
+    return weightUnit === "lb" ? Number(value) / 2.2046226218 : Number(value);
+}
+
+function formatWeight(kg, decimals = 1) {
+    const value = displayWeight(kg);
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: decimals })} ${weightUnit}`;
+}
+
+function formatVolume(kgVolume) {
+    return `${Math.round(displayWeight(kgVolume)).toLocaleString()} ${weightUnit}`;
+}
+
 function loadState() {
     const saved = loadJSON(STATE_KEY, {});
     const savedSplit = saved.split || structuredClone(defaultSplit);
@@ -87,6 +110,7 @@ function loadState() {
         trackingStartDate: saved.trackingStartDate || saved.startDate || dateKey(today),
         startingIndex: saved.startingIndex || 0,
         scheduleOffset: saved.scheduleOffset || 0,
+        scheduleAdjustments: saved.scheduleAdjustments || [],
         splitName: saved.splitName || "Push Pull Legs",
         split: savedSplit,
         exerciseRules: saved.exerciseRules || [],
@@ -108,7 +132,10 @@ function scheduleIndexFor(date) {
     const missedBeforeDate = Object.values(history).filter((entry) => (
         entry.status === "missed" && dateFromKey(entry.date) >= startDate && dateFromKey(entry.date) < date
     )).length;
-    const rawIndex = state.startingIndex + state.scheduleOffset + daysBetween(startDate, date) - missedBeforeDate;
+    const datedOffset = state.scheduleAdjustments
+        .filter((adjustment) => dateKey(date) >= adjustment.effectiveDate)
+        .reduce((sum, adjustment) => sum + adjustment.delta, 0);
+    const rawIndex = state.startingIndex + state.scheduleOffset + datedOffset + daysBetween(startDate, date) - missedBeforeDate;
     return ((rawIndex % state.split.length) + state.split.length) % state.split.length;
 }
 
@@ -123,6 +150,19 @@ function workoutForDate(date) {
         exerciseIds,
         exercises: exerciseIds.map((id) => catalogById.get(id)).filter(Boolean)
     };
+}
+
+function removeMissedEntriesNowOnRestDays() {
+    let changed = false;
+    for (let pass = 0; pass < state.split.length + 2; pass += 1) {
+        const invalid = Object.values(history).find((entry) => entry.status === "missed" && workoutForDate(dateFromKey(entry.date)).isRest);
+        if (!invalid) break;
+        delete history[invalid.date];
+        localStorage.removeItem(DRAFT_PREFIX + invalid.date);
+        changed = true;
+    }
+    if (changed) saveHistory();
+    return changed;
 }
 
 function exerciseIdsForDate(date, day) {
@@ -152,7 +192,7 @@ function createSetRow(setNumber, values = {}) {
         <label>
             <span class="visually-hidden">Weight for set ${setNumber}</span>
             <input class="weight-input" type="number" min="0" step="0.5"
-                placeholder="kg" value="${values.weight ?? ""}" aria-label="Weight for set ${setNumber}">
+                placeholder="${weightUnit}" value="${values.weight == null || values.weight === "" ? "" : Number(displayWeight(values.weight).toFixed(2))}" aria-label="Weight for set ${setNumber} in ${weightUnit}">
         </label>
         <label>
             <span class="visually-hidden">Reps for set ${setNumber}</span>
@@ -190,7 +230,7 @@ function renumberSets(container) {
 function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewedDate) {
     const previous = previousPerformanceForExercise(exercise.id, referenceDate);
     const previousSets = previous
-        ? previous.exercise.sets.filter((set) => set.weight > 0 && set.reps > 0).map((set) => `${set.weight} kg × ${set.reps}`).join(" · ")
+        ? previous.exercise.sets.filter((set) => set.weight > 0 && set.reps > 0).map((set) => `${formatWeight(set.weight)} × ${set.reps}`).join(" · ")
         : "No previous session";
     const card = document.createElement("article");
     card.className = "exercise-card";
@@ -281,13 +321,14 @@ function readWorkoutFromPage() {
         date: dateKey(viewedDate),
         split: scheduled.name,
         splitIndex: scheduled.index,
+        sessionDurationSeconds: getSessionElapsedSeconds(),
         exercises: scheduled.exercises.map((exercise) => {
             const card = document.querySelector(`[data-exercise-id="${exercise.id}"]`);
             return {
                 ...exercise,
                 completed: card.querySelector(".exercise-complete").checked,
                 sets: [...card.querySelectorAll(".set-row")].map((row) => ({
-                    weight: Number(row.querySelector(".weight-input").value) || 0,
+                    weight: storedWeight(row.querySelector(".weight-input").value) || 0,
                     reps: Number(row.querySelector(".reps-input").value) || 0
                 }))
             };
@@ -312,7 +353,7 @@ function updateSummary() {
     const volume = loggedSets.reduce((total, set) => total + set.weight * set.reps, 0);
     document.querySelector("#completed-count").textContent = `${completed}/${scheduled.exercises.length}`;
     document.querySelector("#set-count").textContent = loggedSets.length;
-    document.querySelector("#total-volume").textContent = `${volume.toLocaleString()} kg`;
+    document.querySelector("#total-volume").textContent = formatVolume(volume);
 }
 
 function viewWorkoutDate(date) {
@@ -326,10 +367,12 @@ function renderUpcoming() {
     for (let offset = 0; offset < 4; offset += 1) {
         const date = addDays(today, offset);
         const scheduled = workoutForDate(date);
+        const dayHistory = history[dateKey(date)];
         const card = document.createElement("button");
         card.type = "button";
         card.className = `upcoming-day${offset === 0 ? " today" : ""}${dateKey(date) === dateKey(viewedDate) ? " selected" : ""}`;
-        card.innerHTML = `<span>${offset === 0 ? "Today" : new Intl.DateTimeFormat("en-AU", { weekday: "short" }).format(date)}</span><strong>${escapeHTML(scheduled.name)}</strong>`;
+        const displayName = dayHistory?.status === "missed" ? `Missed · ${scheduled.name}` : scheduled.name;
+        card.innerHTML = `<span>${offset === 0 ? "Today" : new Intl.DateTimeFormat("en-AU", { weekday: "short" }).format(date)}</span><strong>${escapeHTML(displayName)}</strong>`;
         card.addEventListener("click", () => viewWorkoutDate(date));
         container.append(card);
     }
@@ -357,7 +400,9 @@ function renderWorkout() {
     document.querySelector("#workout-summary").hidden = isRest;
     document.querySelector("#muscle-coverage").hidden = isRest;
     document.querySelector("#rest-timer").hidden = isRest;
+    document.querySelector("#session-timer").hidden = isRest;
     document.querySelector("#rest-panel").hidden = !isRest;
+    document.querySelector("#skip-rest-day").hidden = !isRest || !isToday;
     if (!isRest) {
         scheduled.exercises.forEach((exercise) => {
             const savedExercise = savedDraft?.exercises?.find((item) => item.id === exercise.id);
@@ -377,6 +422,7 @@ function renderWorkout() {
     }
     renderUpcoming();
     renderSplitList();
+    updateToolVisibility();
 }
 
 function renderSplitList() {
@@ -395,10 +441,10 @@ function renderSplitList() {
 function statusForDate(date, scheduled) {
     const key = dateKey(date);
     const entry = history[key];
+    if (scheduled.isRest) return { className: "rest", symbol: "☾" };
     if (entry?.status === "complete") return { className: "complete", symbol: "✓" };
     if (entry?.status === "missed") return { className: "missed", symbol: "×" };
     if (date < dateFromKey(state.trackingStartDate)) return { className: "planned", symbol: "" };
-    if (scheduled.isRest) return { className: "rest", symbol: "☾" };
     if (date < today) return { className: "missed", symbol: "×" };
     return { className: "planned", symbol: "" };
 }
@@ -427,9 +473,10 @@ function renderCalendar() {
             cell.innerHTML = `<span class="day-number">${date.getDate()}</span>`;
         } else {
             const status = statusForDate(date, scheduled);
+            const displayName = history[dateKey(date)]?.status === "missed" ? `Missed · ${scheduled.name}` : scheduled.name;
             cell.innerHTML = `
                 <span class="day-number">${date.getDate()}</span>
-                <span class="day-workout">${escapeHTML(scheduled.name)}</span>
+                <span class="day-workout">${escapeHTML(displayName)}</span>
                 <span class="day-status ${status.className}">${status.symbol}</span>
             `;
         }
@@ -495,16 +542,17 @@ function bestRecord(sessions, property) {
     ), null);
 }
 
-function setRecord(valueId, dateId, record, property, unit) {
-    document.querySelector(`#${valueId}`).textContent = record ? `${record[property].toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit}` : "—";
+function setRecord(valueId, dateId, record, property, kind = "weight") {
+    const value = record?.[property];
+    document.querySelector(`#${valueId}`).textContent = record ? (kind === "reps" ? `${value} reps` : formatWeight(value)) : "—";
     document.querySelector(`#${dateId}`).textContent = record ? formatShortDate(record.date) : "No data yet";
 }
 
 function renderRecords(sessions) {
-    setRecord("record-one-rm", "record-one-rm-date", bestRecord(sessions, "estimated1RM"), "estimated1RM", " kg");
-    setRecord("record-weight", "record-weight-date", bestRecord(sessions, "maxWeight"), "maxWeight", " kg");
-    setRecord("record-set-volume", "record-set-volume-date", bestRecord(sessions, "bestSetVolume"), "bestSetVolume", " kg");
-    setRecord("record-reps", "record-reps-date", bestRecord(sessions, "maxReps"), "maxReps", " reps");
+    setRecord("record-one-rm", "record-one-rm-date", bestRecord(sessions, "estimated1RM"), "estimated1RM");
+    setRecord("record-weight", "record-weight-date", bestRecord(sessions, "maxWeight"), "maxWeight");
+    setRecord("record-set-volume", "record-set-volume-date", bestRecord(sessions, "bestSetVolume"), "bestSetVolume");
+    setRecord("record-reps", "record-reps-date", bestRecord(sessions, "maxReps"), "maxReps", "reps");
 }
 
 const metricDetails = {
@@ -517,13 +565,21 @@ const metricDetails = {
 function renderProgressChart(sessions) {
     const metric = document.querySelector("#progress-metric").value;
     const details = metricDetails[metric];
-    const points = sessions.filter((session) => session[metric] > 0);
+    const mode = document.querySelector("#progress-graph-mode").value;
+    const range = document.querySelector("#graph-range").value;
+    const cutoff = range === "all" ? "0000-00-00" : dateKey(addDays(today, -(Number(range) - 1)));
+    const strengthPoints = sessions.filter((session) => session[metric] > 0 && session.date >= cutoff).map((point) => ({ date: point.date, value: metric === "maxReps" ? point[metric] : displayWeight(point[metric]) }));
+    const bodyPoints = loadJSON(BODYWEIGHT_KEY, []).filter((entry) => entry.weight > 0 && entry.date >= cutoff).sort((a, b) => a.date.localeCompare(b.date)).map((entry) => ({ date: entry.date, value: displayWeight(entry.weight) }));
+    const series = mode === "strength" ? [{ name: details.label, points: strengthPoints, className: "strength-series" }]
+        : mode === "bodyweight" ? [{ name: "Bodyweight", points: bodyPoints, className: "bodyweight-series" }]
+            : [{ name: details.label, points: strengthPoints, className: "strength-series" }, { name: "Bodyweight", points: bodyPoints, className: "bodyweight-series" }].filter((item) => item.points.length);
+    const allPoints = series.flatMap((item) => item.points);
     const svg = document.querySelector("#progress-chart");
     const empty = document.querySelector("#chart-empty");
-    document.querySelector("#chart-title").textContent = details.label;
-    empty.hidden = points.length > 0;
-    svg.hidden = points.length === 0;
-    if (!points.length) {
+    document.querySelector("#chart-title").textContent = mode === "combined" ? "Strength + bodyweight overview" : mode === "bodyweight" ? "Bodyweight" : details.label;
+    empty.hidden = allPoints.length > 0;
+    svg.hidden = allPoints.length === 0;
+    if (!allPoints.length) {
         document.querySelector("#chart-change").textContent = "";
         svg.innerHTML = "";
         return;
@@ -532,7 +588,7 @@ function renderProgressChart(sessions) {
     const width = 700;
     const height = 300;
     const padding = { left: 58, right: 20, top: 22, bottom: 42 };
-    const values = points.map((point) => point[metric]);
+    const values = allPoints.map((point) => point.value);
     let minValue = Math.min(...values);
     let maxValue = Math.max(...values);
     if (minValue === maxValue) {
@@ -544,43 +600,62 @@ function renderProgressChart(sessions) {
         maxValue += margin;
     }
 
-    const firstDate = dateFromKey(points[0].date).getTime();
-    const lastDate = dateFromKey(points.at(-1).date).getTime();
+    const dates = allPoints.map((point) => dateFromKey(point.date).getTime());
+    const firstDate = Math.min(...dates);
+    const lastDate = Math.max(...dates);
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     const xFor = (point, index) => lastDate === firstDate
         ? padding.left + plotWidth / 2
         : padding.left + ((dateFromKey(point.date).getTime() - firstDate) / (lastDate - firstDate)) * plotWidth;
-    const yFor = (value) => padding.top + (1 - (value - minValue) / (maxValue - minValue)) * plotHeight;
-    const coordinates = points.map((point, index) => ({ x: xFor(point, index), y: yFor(point[metric]), point }));
-    const linePoints = coordinates.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-    const areaPoints = `${padding.left},${height - padding.bottom} ${linePoints} ${coordinates.at(-1).x},${height - padding.bottom}`;
+    const normalized = mode === "combined";
+    const coordinatesFor = (item) => {
+        const itemValues = item.points.map((point) => point.value);
+        const itemMin = Math.min(...itemValues);
+        const itemMax = Math.max(...itemValues);
+        return item.points.map((point, index) => {
+            const ratio = normalized ? (itemMax === itemMin ? 0.5 : (point.value - itemMin) / (itemMax - itemMin)) : (point.value - minValue) / (maxValue - minValue);
+            return { x: xFor(point, index), y: padding.top + (1 - ratio) * plotHeight, point };
+        });
+    };
 
     const gridLines = Array.from({ length: 5 }, (_, index) => {
         const fraction = index / 4;
         const y = padding.top + fraction * plotHeight;
-        const value = maxValue - fraction * (maxValue - minValue);
+        const value = normalized ? 100 - fraction * 100 : maxValue - fraction * (maxValue - minValue);
         return `<line class="chart-grid-line" x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}"></line>
-            <text class="chart-axis-label" x="${padding.left - 8}" y="${y + 3}" text-anchor="end">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</text>`;
+            <text class="chart-axis-label" x="${padding.left - 8}" y="${y + 3}" text-anchor="end">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}${normalized ? "%" : ""}</text>`;
     }).join("");
-    const circles = coordinates.map(({ x, y, point }) => `
-        <circle class="chart-point" cx="${x}" cy="${y}" r="5"><title>${formatShortDate(point.date)}: ${point[metric].toFixed(1)} ${details.unit}</title></circle>
-    `).join("");
-    const dateLabels = [coordinates[0], ...(coordinates.length > 2 ? [coordinates[Math.floor(coordinates.length / 2)]] : []), ...(coordinates.length > 1 ? [coordinates.at(-1)] : [])]
-        .map(({ x, point }) => `<text class="chart-axis-label" x="${x}" y="${height - 12}" text-anchor="middle">${new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" }).format(dateFromKey(point.date))}</text>`).join("");
+    const phaseColours = { cut: "#ff765f", maintain: "#62a8ff", bulk: "#72e586" };
+    const phaseRects = loadJSON(PHASES_KEY, []).map((phase) => {
+        const start = Math.max(firstDate, dateFromKey(phase.start).getTime());
+        const end = Math.min(lastDate, dateFromKey(phase.end).getTime());
+        if (end < firstDate || start > lastDate) return "";
+        const x1 = lastDate === firstDate ? padding.left : padding.left + (start - firstDate) / (lastDate - firstDate) * plotWidth;
+        const x2 = lastDate === firstDate ? width - padding.right : padding.left + (end - firstDate) / (lastDate - firstDate) * plotWidth;
+        return `<rect class="phase-band" x="${x1}" y="${padding.top}" width="${Math.max(3, x2 - x1)}" height="${plotHeight}" fill="${phaseColours[phase.type]}" opacity="0.09"><title>${phase.type}: ${phase.start} to ${phase.end}</title></rect>`;
+    }).join("");
+    const plottedSeries = series.map((item) => {
+        const coordinates = coordinatesFor(item);
+        const line = coordinates.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+        const circles = coordinates.map(({ x, y, point }) => `<circle class="chart-point ${item.className}" cx="${x}" cy="${y}" r="5"><title>${item.name} · ${formatShortDate(point.date)}: ${point.value.toFixed(1)} ${metric === "maxReps" && item.name !== "Bodyweight" ? "reps" : weightUnit}</title></circle>`).join("");
+        return `<polyline class="chart-line ${item.className}" points="${line}"></polyline>${circles}`;
+    }).join("");
+    const labelDates = [firstDate, ...(lastDate > firstDate ? [lastDate] : [])];
+    const dateLabels = labelDates.map((time) => `<text class="chart-axis-label" x="${lastDate === firstDate ? padding.left + plotWidth / 2 : padding.left + (time - firstDate) / (lastDate - firstDate) * plotWidth}" y="${height - 12}" text-anchor="middle">${new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" }).format(new Date(time))}</text>`).join("");
 
     svg.innerHTML = `
         <defs><linearGradient id="chart-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72e586" stop-opacity="0.3"></stop><stop offset="100%" stop-color="#72e586" stop-opacity="0"></stop></linearGradient></defs>
-        ${gridLines}<polygon class="chart-area" points="${areaPoints}"></polygon>
-        <polyline class="chart-line" points="${linePoints}"></polyline>${circles}${dateLabels}
+        ${phaseRects}${gridLines}${plottedSeries}${dateLabels}
     `;
 
-    const first = points[0][metric];
-    const last = points.at(-1)[metric];
+    const selected = mode === "bodyweight" ? bodyPoints : strengthPoints;
+    const first = selected[0]?.value || 0;
+    const last = selected.at(-1)?.value || 0;
     const change = first > 0 ? ((last - first) / first) * 100 : 0;
-    document.querySelector("#chart-change").textContent = points.length > 1
+    document.querySelector("#chart-change").textContent = selected.length > 1
         ? `${change >= 0 ? "+" : ""}${change.toFixed(1)}% overall`
-        : "First recorded session";
+        : selected.length ? "First recorded entry" : "";
 }
 
 function renderExerciseHistory(sessions) {
@@ -593,8 +668,8 @@ function renderExerciseHistory(sessions) {
     container.innerHTML = [...sessions].reverse().map((session) => `
         <article class="history-session">
             <div class="history-date"><strong>${formatShortDate(session.date)}</strong><small>${escapeHTML(session.split || "Workout")}</small></div>
-            <div class="history-sets">${session.sets.map((set) => `<span>${set.weight} kg × ${set.reps}</span>`).join("")}</div>
-            <div class="history-best"><strong>${session.estimated1RM > 0 ? `${session.estimated1RM.toFixed(1)} kg` : "—"}</strong><small>estimated 1RM</small></div>
+            <div class="history-sets">${session.sets.map((set) => `<span>${formatWeight(set.weight)} × ${set.reps}</span>`).join("")}</div>
+            <div class="history-best"><strong>${session.estimated1RM > 0 ? formatWeight(session.estimated1RM) : "—"}</strong><small>estimated 1RM</small></div>
         </article>
     `).join("");
 }
@@ -610,8 +685,268 @@ function renderRecentWorkouts() {
     container.innerHTML = workouts.slice(0, 10).map((workout) => {
         const sets = workout.exercises.flatMap((exercise) => exercise.sets).filter((set) => set.weight > 0 && set.reps > 0);
         const volume = sets.reduce((sum, set) => sum + set.weight * set.reps, 0);
-        return `<article class="recent-workout"><div><strong>${escapeHTML(workout.split)} Day</strong><small>${formatShortDate(workout.date)}</small></div><div class="recent-workout-stats">${sets.length} sets · ${volume.toLocaleString()} kg</div></article>`;
+        const duration = workout.sessionDurationSeconds > 0 ? ` · ${formatSessionTime(workout.sessionDurationSeconds)}` : "";
+        return `<article class="recent-workout"><div><strong>${escapeHTML(workout.split)} Day</strong><small>${formatShortDate(workout.date)}</small></div><div class="recent-workout-stats">${sets.length} sets · ${formatVolume(volume)}${duration}</div></article>`;
     }).join("");
+}
+
+function workoutVolume(workout) {
+    return workout.exercises.flatMap((exercise) => exercise.sets || [])
+        .filter((set) => set.weight > 0 && set.reps > 0)
+        .reduce((sum, set) => sum + set.weight * set.reps, 0);
+}
+
+function workoutsInRange(start, end) {
+    return completedWorkouts().filter((workout) => workout.date >= dateKey(start) && workout.date <= dateKey(end));
+}
+
+function startOfWeek(date) {
+    return addDays(date, -((date.getDay() + 6) % 7));
+}
+
+function calculateStreaks() {
+    const first = dateFromKey(state.trackingStartDate);
+    const last = history[dateKey(today)]?.status === "complete" ? today : addDays(today, -1);
+    let running = 0;
+    let longest = 0;
+    for (let date = first; date <= last; date = addDays(date, 1)) {
+        const scheduled = workoutForDate(date);
+        if (scheduled.isRest) continue;
+        if (history[dateKey(date)]?.status === "complete") {
+            running += 1;
+            longest = Math.max(longest, running);
+        } else {
+            running = 0;
+        }
+    }
+    return { current: running, longest };
+}
+
+function renderAnalyticsOverview() {
+    const week = workoutsInRange(startOfWeek(today), today);
+    const month = workoutsInRange(new Date(today.getFullYear(), today.getMonth(), 1), today);
+    document.querySelector("#weekly-volume").textContent = formatVolume(week.reduce((sum, workout) => sum + workoutVolume(workout), 0));
+    document.querySelector("#weekly-workouts").textContent = `${week.length} workout${week.length === 1 ? "" : "s"}`;
+    document.querySelector("#monthly-volume").textContent = formatVolume(month.reduce((sum, workout) => sum + workoutVolume(workout), 0));
+    document.querySelector("#monthly-workouts").textContent = `${month.length} workout${month.length === 1 ? "" : "s"}`;
+    const streaks = calculateStreaks();
+    document.querySelector("#current-streak").textContent = streaks.current;
+    document.querySelector("#longest-streak").textContent = streaks.longest;
+
+    const thirtyDaysAgo = addDays(today, -29);
+    const recent = workoutsInRange(thirtyDaysAgo, today);
+    document.querySelector("#training-frequency").textContent = (recent.length / (30 / 7)).toFixed(1);
+    let planned = 0;
+    let completed = 0;
+    const consistencyStart = dateFromKey(state.trackingStartDate) > thirtyDaysAgo ? dateFromKey(state.trackingStartDate) : thirtyDaysAgo;
+    for (let date = consistencyStart; date <= today; date = addDays(date, 1)) {
+        if (workoutForDate(date).isRest) continue;
+        planned += 1;
+        if (history[dateKey(date)]?.status === "complete") completed += 1;
+    }
+    document.querySelector("#training-consistency").textContent = planned ? `${Math.round(completed / planned * 100)}%` : "—";
+}
+
+function renderCompoundStrength() {
+    const compounds = [
+        { name: "Bench", ids: ["barbell-bench-press", "bench-press"] },
+        { name: "Squat", ids: ["back-squat", "squat"] },
+        { name: "Deadlift", ids: ["deadlift"] }
+    ];
+    document.querySelector("#compound-grid").innerHTML = compounds.map((compound) => {
+        const id = compound.ids.find((candidate) => sessionsForExercise(candidate).length) || compound.ids[0];
+        const sessions = sessionsForExercise(id).filter((session) => session.estimated1RM > 0);
+        const values = sessions.map((session) => session.estimated1RM);
+        const best = values.length ? Math.max(...values) : 0;
+        const change = values.length > 1 ? (values.at(-1) - values[0]) / values[0] * 100 : 0;
+        const max = best || 1;
+        const bars = values.slice(-12).map((value) => `<i style="height:${Math.max(8, value / max * 100)}%" title="${formatWeight(value)}"></i>`).join("");
+        return `<article class="compound-lift"><span>${compound.name}</span><strong>${best ? formatWeight(best) : "—"}</strong><small>${values.length > 1 ? `${change >= 0 ? "+" : ""}${change.toFixed(1)}% since first entry` : values.length ? "First entry recorded" : "No history yet"}</small><div class="mini-history">${bars}</div></article>`;
+    }).join("");
+}
+
+function renderRepPerformance(exerciseId) {
+    const reps = Number(document.querySelector("#rep-target").value || 5);
+    const candidates = sessionsForExercise(exerciseId).flatMap((session) => (
+        session.sets.filter((set) => set.reps === reps).map((set) => ({ ...set, date: session.date }))
+    ));
+    const best = candidates.reduce((current, set) => !current || set.weight > current.weight ? set : current, null);
+    document.querySelector("#rep-performance").innerHTML = best
+        ? `<div class="rep-result"><span>Best ${reps}-rep set</span><strong>${formatWeight(best.weight)} × ${reps}</strong><small>${formatShortDate(best.date)}</small></div>`
+        : `<p class="empty-history">No ${reps}-rep sets recorded for this exercise.</p>`;
+}
+
+function renderMuscleVolume() {
+    const totals = new Map();
+    workoutsInRange(addDays(today, -29), today).forEach((workout) => {
+        workout.exercises.forEach((exercise) => {
+            const volume = (exercise.sets || []).reduce((sum, set) => sum + (set.weight > 0 && set.reps > 0 ? set.weight * set.reps : 0), 0);
+            if (!volume) return;
+            totals.set(exercise.primaryMuscle, (totals.get(exercise.primaryMuscle) || 0) + volume);
+            (exercise.secondaryMuscles || []).forEach((muscle) => totals.set(muscle, (totals.get(muscle) || 0) + volume * 0.5));
+        });
+    });
+    const rows = [...totals].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    const max = rows[0]?.[1] || 1;
+    document.querySelector("#muscle-volume-bars").innerHTML = rows.length
+        ? rows.map(([muscle, volume]) => `<div class="horizontal-bar-row"><span>${escapeHTML(muscle)}</span><div class="horizontal-bar-track"><div class="horizontal-bar-fill" style="width:${volume / max * 100}%"></div></div><span>${formatVolume(volume)}</span></div>`).join("")
+        : '<p class="empty-history">Complete workouts to calculate muscle-group volume.</p>';
+}
+
+function rangeStats(startKey, endKey, exerciseId) {
+    const workouts = completedWorkouts().filter((workout) => workout.date >= startKey && workout.date <= endKey);
+    const sessions = sessionsForExercise(exerciseId).filter((session) => session.date >= startKey && session.date <= endKey);
+    return {
+        workouts: workouts.length,
+        volume: workouts.reduce((sum, workout) => sum + workoutVolume(workout), 0),
+        estimated1RM: sessions.length ? Math.max(...sessions.map((session) => session.estimated1RM)) : 0
+    };
+}
+
+function runDateComparison() {
+    const exerciseId = document.querySelector("#progress-exercise").value;
+    const a = rangeStats(document.querySelector("#compare-a-start").value, document.querySelector("#compare-a-end").value, exerciseId);
+    const b = rangeStats(document.querySelector("#compare-b-start").value, document.querySelector("#compare-b-end").value, exerciseId);
+    const result = (label, av, bv, unit = "") => {
+        const change = av ? (bv - av) / av * 100 : 0;
+        return `<div class="comparison-result"><span>${label}</span><strong>${av.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit} → ${bv.toLocaleString(undefined, { maximumFractionDigits: 1 })}${unit}</strong><small>${av ? `${change >= 0 ? "+" : ""}${change.toFixed(1)}%` : "No Range A baseline"}</small></div>`;
+    };
+    const converted = (value) => displayWeight(value);
+    document.querySelector("#comparison-results").innerHTML = result("Total volume", converted(a.volume), converted(b.volume), ` ${weightUnit}`) + result("Completed workouts", a.workouts, b.workouts) + result("Best estimated 1RM", converted(a.estimated1RM), converted(b.estimated1RM), ` ${weightUnit}`);
+}
+
+function canonicalMuscle(muscle) {
+    const map = {
+        "Upper Chest": "Chest", Chest: "Chest", Back: "Back", "Upper Back": "Back", Lats: "Back", "Lower Back": "Back",
+        Shoulders: "Shoulders", "Front Delts": "Shoulders", "Side Delts": "Shoulders", "Rear Delts": "Shoulders", Traps: "Shoulders",
+        Biceps: "Biceps", Triceps: "Triceps", Forearms: "Forearms", Quads: "Quads", Adductors: "Quads", Hamstrings: "Hamstrings",
+        Glutes: "Glutes", Calves: "Calves", Abs: "Core", Core: "Core", Obliques: "Core", "Hip Flexors": "Core"
+    };
+    return map[muscle] || muscle;
+}
+
+function renderProgrammingAnalysis() {
+    const setTotals = new Map();
+    const exerciseDays = new Map();
+    const rotationFactor = 7 / Math.max(1, state.split.length);
+    state.split.filter((day) => !day.isRest).forEach((day) => {
+        day.exerciseIds.forEach((id) => {
+            const exercise = catalogById.get(id);
+            if (!exercise) return;
+            const muscle = canonicalMuscle(exercise.primaryMuscle);
+            setTotals.set(muscle, (setTotals.get(muscle) || 0) + 3 * rotationFactor);
+            if (!exerciseDays.has(id)) exerciseDays.set(id, []);
+            exerciseDays.get(id).push(day.name);
+        });
+    });
+    const totals = [...setTotals].sort((a, b) => b[1] - a[1]);
+    document.querySelector("#weekly-muscle-sets").innerHTML = totals.length
+        ? totals.map(([muscle, sets]) => `<div class="muscle-set-row"><span>${escapeHTML(muscle)}</span><strong>~${sets.toFixed(1)} sets</strong></div>`).join("")
+        : '<p class="empty-history">Add exercises to analyse the split.</p>';
+
+    const notices = [];
+    const majorMuscles = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core"];
+    const underrepresented = majorMuscles.filter((muscle) => (setTotals.get(muscle) || 0) < 3);
+    if (underrepresented.length) {
+        const suggestions = underrepresented.slice(0, 4).map((muscle) => {
+            const exercise = allExercises().find((item) => canonicalMuscle(item.primaryMuscle) === muscle);
+            return exercise ? `${muscle}: ${exercise.name}` : muscle;
+        });
+        notices.push({ warning: false, text: `Lower-coverage groups: ${underrepresented.join(", ")}. Possible additions — ${suggestions.join("; ")}.` });
+    }
+    const duplicates = [...exerciseDays].filter(([, days]) => days.length > 1);
+    duplicates.forEach(([id, days]) => notices.push({ warning: true, text: `${catalogById.get(id)?.name || id} appears on ${days.length} days (${days.join(", ")}). Check that the repetition is intentional.` }));
+    totals.filter(([, sets]) => sets > 20).forEach(([muscle, sets]) => notices.push({ warning: true, text: `${muscle} has approximately ${sets.toFixed(1)} direct sets per week, which may be excessive depending on intensity and recovery.` }));
+    if (!notices.length) notices.push({ warning: false, text: "No obvious coverage gaps or repeated-exercise warnings were found in the current split." });
+    document.querySelector("#analysis-notices").innerHTML = notices.map((notice) => `<div class="analysis-notice${notice.warning ? " warning" : ""}">${escapeHTML(notice.text)}</div>`).join("");
+}
+
+function renderBodyweightHistory() {
+    const entries = loadJSON(BODYWEIGHT_KEY, []).sort((a, b) => a.date.localeCompare(b.date));
+    const change = entries.length > 1 ? entries.at(-1).weight - entries[0].weight : 0;
+    document.querySelector("#bodyweight-change").textContent = entries.length > 1 ? `${displayWeight(change) >= 0 ? "+" : ""}${displayWeight(change).toFixed(1)} ${weightUnit} overall` : "";
+    document.querySelector("#bodyweight-history").innerHTML = entries.length
+        ? [...entries].reverse().slice(0, 12).map((entry) => `<div class="bodyweight-entry"><span>${formatShortDate(entry.date)}</span><strong>${formatWeight(entry.weight)}</strong><button type="button" data-date="${entry.date}" aria-label="Delete bodyweight entry">×</button></div>`).join("")
+        : '<p class="empty-history">No bodyweight entries yet.</p>';
+    document.querySelectorAll(".bodyweight-entry button").forEach((button) => button.addEventListener("click", () => {
+        const updated = loadJSON(BODYWEIGHT_KEY, []).filter((entry) => entry.date !== button.dataset.date);
+        localStorage.setItem(BODYWEIGHT_KEY, JSON.stringify(updated));
+        renderProgress();
+    }));
+}
+
+function renderTrainingPhases() {
+    const phases = loadJSON(PHASES_KEY, []).sort((a, b) => a.start.localeCompare(b.start));
+    document.querySelector("#phase-list").innerHTML = phases.length ? phases.map((phase) => `<div class="phase-entry ${phase.type}"><span>${escapeHTML(phase.type)}</span><strong>${formatShortDate(phase.start)} – ${formatShortDate(phase.end)}</strong><button type="button" data-id="${phase.id}" aria-label="Delete phase">×</button></div>`).join("") : '<p class="empty-history">No training phases added yet.</p>';
+    document.querySelectorAll("#phase-list button").forEach((button) => button.addEventListener("click", () => {
+        localStorage.setItem(PHASES_KEY, JSON.stringify(phases.filter((phase) => phase.id !== button.dataset.id)));
+        renderTrainingPhases();
+        renderProgress();
+    }));
+}
+
+function populateGoalExercises() {
+    const select = document.querySelector("#goal-exercise");
+    const previous = select.value;
+    select.innerHTML = allExercises().sort((a, b) => a.name.localeCompare(b.name)).map((exercise) => `<option value="${escapeHTML(exercise.id)}">${escapeHTML(exercise.name)}</option>`).join("");
+    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+}
+
+function renderGoals() {
+    populateGoalExercises();
+    const goals = loadJSON(GOALS_KEY, []);
+    document.querySelector("#goal-list").innerHTML = goals.length ? goals.map((goal) => {
+        const exercise = catalogById.get(goal.exerciseId);
+        const sessions = sessionsForExercise(goal.exerciseId);
+        const current = sessions.length ? Math.max(...sessions.map((session) => session.estimated1RM)) : 0;
+        const target = estimatedOneRepMax(goal.weight, goal.reps);
+        const progress = target > 0 ? Math.min(100, current / target * 100) : 0;
+        const predicted = current > 0 ? (goal.reps === 1 ? current : current / (1 + goal.reps / 30)) : 0;
+        const ready = current >= target * 0.98;
+        return `<article class="goal-entry${ready ? " ready" : ""}"><div><strong>${escapeHTML(exercise?.name || goal.exerciseId)}</strong><span>${formatWeight(goal.weight)} × ${goal.reps}</span></div><div class="goal-progress"><i style="width:${progress}%"></i></div><small>${progress.toFixed(0)}% · ${ready ? "Ready to attempt PR" : `Estimated ${formatWeight(predicted)} × ${goal.reps} capability`}</small><button type="button" data-id="${goal.id}" aria-label="Delete goal">×</button></article>`;
+    }).join("") : '<p class="empty-history">Add a strength goal to track PR readiness.</p>';
+    document.querySelectorAll("#goal-list button").forEach((button) => button.addEventListener("click", () => {
+        localStorage.setItem(GOALS_KEY, JSON.stringify(goals.filter((goal) => goal.id !== button.dataset.id)));
+        renderGoals();
+    }));
+}
+
+const progressSections = {
+    overview: "Training overview", records: "Personal records", graph: "Main graph", phases: "Training phases", goals: "Strength goals",
+    history: "Exercise history", compounds: "Compound strength", "rep-performance": "Best performance by reps", "muscle-volume": "Muscle volume",
+    comparison: "Date comparison", bodyweight: "Bodyweight", programming: "Split analysis", recent: "Recent workouts"
+};
+const defaultProgressSections = new Set(["overview", "records", "graph", "history", "bodyweight", "recent"]);
+
+function progressLayoutState() {
+    const saved = loadJSON(PROGRESS_LAYOUT_KEY, {});
+    return {
+        visibility: saved.visibility || Object.fromEntries(Object.keys(progressSections).map((id) => [id, Object.hasOwn(saved, id) ? saved[id] : defaultProgressSections.has(id)])),
+        order: Array.isArray(saved.order) ? [...saved.order, ...Object.keys(progressSections).filter((id) => !saved.order.includes(id))] : Object.keys(progressSections)
+    };
+}
+
+function applyProgressLayout(layout = progressLayoutState()) {
+    const anchor = document.querySelector("#progress-view .backup-card");
+    layout.order.forEach((id) => {
+        const section = document.querySelector(`[data-progress-section="${id}"]`);
+        if (section) anchor.parentElement.insertBefore(section, anchor);
+    });
+    document.querySelectorAll("[data-progress-section]").forEach((section) => { section.hidden = layout.visibility[section.dataset.progressSection] === false; });
+}
+
+function renderProgressSettings() {
+    const layout = progressLayoutState();
+    const container = document.querySelector("#progress-section-options");
+    container.innerHTML = layout.order.map((id, index) => `<div class="progress-option-row" data-section="${id}"><label><input type="checkbox" ${layout.visibility[id] === false ? "" : "checked"}> <span>${progressSections[id]}</span></label><div><button type="button" data-move="up" ${index === 0 ? "disabled" : ""} aria-label="Move ${progressSections[id]} up">↑</button><button type="button" data-move="down" ${index === layout.order.length - 1 ? "disabled" : ""} aria-label="Move ${progressSections[id]} down">↓</button></div></div>`).join("");
+    container.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
+        const row = button.closest(".progress-option-row");
+        const sibling = button.dataset.move === "up" ? row.previousElementSibling : row.nextElementSibling;
+        if (!sibling) return;
+        if (button.dataset.move === "up") row.parentElement.insertBefore(row, sibling);
+        else row.parentElement.insertBefore(sibling, row);
+        container.querySelectorAll("button").forEach((control) => { control.disabled = control.dataset.move === "up" ? !control.closest(".progress-option-row").previousElementSibling : !control.closest(".progress-option-row").nextElementSibling; });
+    }));
 }
 
 function renderProgress() {
@@ -622,6 +957,16 @@ function renderProgress() {
     renderProgressChart(sessions);
     renderExerciseHistory(sessions);
     renderRecentWorkouts();
+    renderAnalyticsOverview();
+    renderCompoundStrength();
+    renderRepPerformance(exerciseId);
+    renderMuscleVolume();
+    renderProgrammingAnalysis();
+    renderBodyweightHistory();
+    renderTrainingPhases();
+    renderGoals();
+    applyProgressLayout();
+    document.querySelector("#comparison-exercise-name").textContent = catalogById.get(exerciseId)?.name || "";
 }
 
 function showView(viewId) {
@@ -643,6 +988,103 @@ document.querySelectorAll(".tab").forEach((tab) => {
 
 document.querySelector("#progress-exercise").addEventListener("change", renderProgress);
 document.querySelector("#progress-metric").addEventListener("change", renderProgress);
+document.querySelector("#progress-graph-mode").addEventListener("change", renderProgress);
+document.querySelector("#graph-range").addEventListener("change", renderProgress);
+const graphRanges = ["30", "90", "180", "365", "all"];
+function zoomGraph(direction) {
+    const select = document.querySelector("#graph-range");
+    const current = graphRanges.indexOf(select.value);
+    select.value = graphRanges[Math.max(0, Math.min(graphRanges.length - 1, current + direction))];
+    renderProgress();
+}
+document.querySelector("#graph-zoom-in").addEventListener("click", () => zoomGraph(-1));
+document.querySelector("#graph-zoom-out").addEventListener("click", () => zoomGraph(1));
+document.querySelector("#rep-target").innerHTML = Array.from({ length: 15 }, (_, index) => `<option value="${index + 1}"${index === 4 ? " selected" : ""}>${index + 1} reps</option>`).join("");
+document.querySelector("#rep-target").addEventListener("change", renderProgress);
+
+const comparisonDefaults = {
+    aStart: addDays(today, -55), aEnd: addDays(today, -28),
+    bStart: addDays(today, -27), bEnd: today
+};
+document.querySelector("#compare-a-start").value = dateKey(comparisonDefaults.aStart);
+document.querySelector("#compare-a-end").value = dateKey(comparisonDefaults.aEnd);
+document.querySelector("#compare-b-start").value = dateKey(comparisonDefaults.bStart);
+document.querySelector("#compare-b-end").value = dateKey(comparisonDefaults.bEnd);
+document.querySelector("#run-comparison").addEventListener("click", runDateComparison);
+document.querySelector("#bodyweight-date").value = dateKey(today);
+document.querySelector("#bodyweight-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const date = document.querySelector("#bodyweight-date").value;
+    const weight = storedWeight(document.querySelector("#bodyweight-value").value);
+    if (!date || !Number.isFinite(weight) || weight <= 0) return;
+    const entries = loadJSON(BODYWEIGHT_KEY, []).filter((entry) => entry.date !== date);
+    entries.push({ date, weight });
+    entries.sort((a, b) => a.date.localeCompare(b.date));
+    localStorage.setItem(BODYWEIGHT_KEY, JSON.stringify(entries));
+    document.querySelector("#bodyweight-value").value = "";
+    renderProgress();
+});
+document.querySelector("#phase-start").value = dateKey(today);
+document.querySelector("#phase-end").value = dateKey(addDays(today, 55));
+document.querySelector("#phase-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const start = document.querySelector("#phase-start").value;
+    const end = document.querySelector("#phase-end").value;
+    if (!start || !end || end < start) return;
+    const phases = loadJSON(PHASES_KEY, []);
+    phases.push({ id: `phase-${Date.now()}`, type: document.querySelector("#phase-type").value, start, end });
+    localStorage.setItem(PHASES_KEY, JSON.stringify(phases));
+    renderProgress();
+});
+document.querySelector("#goal-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const weight = storedWeight(document.querySelector("#goal-weight").value);
+    const reps = Number(document.querySelector("#goal-reps").value);
+    if (!weight || !reps) return;
+    const goals = loadJSON(GOALS_KEY, []);
+    goals.push({ id: `goal-${Date.now()}`, exerciseId: document.querySelector("#goal-exercise").value, weight, reps });
+    localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+    document.querySelector("#goal-weight").value = "";
+    renderGoals();
+});
+document.querySelector("#open-progress-settings").addEventListener("click", () => { renderProgressSettings(); document.querySelector("#progress-settings-dialog").showModal(); });
+document.querySelector("#close-progress-settings").addEventListener("click", () => document.querySelector("#progress-settings-dialog").close());
+document.querySelector("#progress-settings-form").addEventListener("submit", (event) => event.preventDefault());
+document.querySelector("#save-progress-settings").addEventListener("click", () => {
+    const rows = [...document.querySelectorAll("#progress-section-options .progress-option-row")];
+    const layout = { order: rows.map((row) => row.dataset.section), visibility: {} };
+    rows.forEach((row) => { layout.visibility[row.dataset.section] = row.querySelector("input").checked; });
+    localStorage.setItem(PROGRESS_LAYOUT_KEY, JSON.stringify(layout));
+    applyProgressLayout(layout);
+    document.querySelector("#progress-settings-dialog").close();
+});
+
+function detectPersonalRecords(workout) {
+    const records = [];
+    workout.exercises.forEach((exercise) => {
+        const sets = (exercise.sets || []).filter((set) => set.weight > 0 && set.reps > 0);
+        const previous = sessionsForExercise(exercise.id).filter((session) => session.date !== workout.date);
+        if (!sets.length || !previous.length) return;
+        const priorWeight = Math.max(...previous.map((session) => session.maxWeight));
+        const priorOneRM = Math.max(...previous.map((session) => session.estimated1RM));
+        const newWeight = Math.max(...sets.map((set) => set.weight));
+        const newOneRM = Math.max(...sets.map((set) => estimatedOneRepMax(set.weight, set.reps)));
+        const achievements = [];
+        if (newWeight > priorWeight) achievements.push(`${formatWeight(newWeight)} weight PR`);
+        if (newOneRM > priorOneRM + 0.05) achievements.push(`${formatWeight(newOneRM)} estimated 1RM`);
+        if (achievements.length) records.push({ name: exercise.name, achievements });
+    });
+    return records;
+}
+
+function showPRCelebration(records) {
+    if (!records.length) return;
+    document.querySelector("#pr-title").textContent = records.length === 1 ? "Strength PR!" : `${records.length} new records!`;
+    document.querySelector("#pr-records").innerHTML = records.map((record) => `<article><strong>${escapeHTML(record.name)}</strong><span>${escapeHTML(record.achievements.join(" · "))}</span></article>`).join("");
+    document.querySelector("#pr-dialog").showModal();
+}
+
+document.querySelector("#close-pr").addEventListener("click", () => document.querySelector("#pr-dialog").close());
 
 function collectBackupData() {
     const data = {};
@@ -759,7 +1201,12 @@ document.querySelector("#backup-file").addEventListener("change", (event) => imp
 
 workoutForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    pauseSessionTimer();
     const workout = readWorkoutFromPage();
+    sessionTimerState = { elapsedSeconds: 0, running: false, startedAt: null };
+    saveSessionTimer();
+    renderSessionTimer();
+    const personalRecords = detectPersonalRecords(workout);
     history[dateKey(viewedDate)] = { ...workout, status: "complete" };
     saveHistory();
     localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
@@ -767,10 +1214,15 @@ workoutForm.addEventListener("submit", (event) => {
     statusMessage.textContent = viewedDate < today
         ? "Past workout saved — calendar marked green."
         : "Workout completed — calendar marked green.";
+    showPRCelebration(personalRecords);
 });
 
 document.querySelector("#miss-workout").addEventListener("click", () => {
     const scheduled = workoutForDate(viewedDate);
+    if (scheduled.isRest) {
+        statusMessage.textContent = "Rest days cannot be marked as missed. Use Skip rest if you want to train today.";
+        return;
+    }
     const warning = viewedDate < today ? " This will also recalculate every scheduled day after it." : "";
     if (!window.confirm(`Mark ${scheduled.name} on ${formatShortDate(dateKey(viewedDate))} as missed and move the split forward one day?${warning}`)) return;
     history[dateKey(viewedDate)] = {
@@ -780,6 +1232,19 @@ document.querySelector("#miss-workout").addEventListener("click", () => {
     localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
     renderWorkout();
     statusMessage.textContent = `${scheduled.name} marked missed. It repeats on ${formatShortDate(dateKey(addDays(viewedDate, 1)))}.`;
+});
+
+document.querySelector("#skip-rest-day").addEventListener("click", () => {
+    const scheduled = workoutForDate(viewedDate);
+    if (!scheduled.isRest) return;
+    if (!window.confirm(`Skip this rest day and bring the next workout forward to ${formatShortDate(dateKey(viewedDate))}?`)) return;
+    delete history[dateKey(viewedDate)];
+    state.scheduleAdjustments.push({ effectiveDate: dateKey(viewedDate), delta: 1 });
+    removeMissedEntriesNowOnRestDays();
+    saveState();
+    renderWorkout();
+    renderCalendar();
+    statusMessage.textContent = `Rest skipped. ${workoutForDate(viewedDate).name} is now scheduled today.`;
 });
 
 document.querySelector("#return-today").addEventListener("click", () => viewWorkoutDate(today));
@@ -802,17 +1267,23 @@ document.querySelector("#today-button").addEventListener("click", () => {
 function shiftRotation(direction) {
     const before = workoutForDate(today).name;
     const change = direction === "earlier" ? 1 : -1;
-    state.scheduleOffset += change;
+    const preservePrevious = document.querySelector("#preserve-previous-dates").checked;
+    const adjustment = { effectiveDate: dateKey(today), delta: change };
+    if (preservePrevious) state.scheduleAdjustments.push(adjustment);
+    else state.scheduleOffset += change;
     const after = workoutForDate(today).name;
     const wording = direction === "earlier" ? "one day earlier" : "one day later";
-    if (!window.confirm(`Move the entire ${state.splitName} rotation ${wording}?\n\nToday's scheduled workout will change from ${before} to ${after}. Completed workout history will not be moved.`)) {
-        state.scheduleOffset -= change;
+    const scope = preservePrevious ? "today and all future workouts" : "the complete schedule, including previous planned dates";
+    if (!window.confirm(`Move ${scope} ${wording}?\n\nToday's scheduled workout will change from ${before} to ${after}. Completed workout records will not be changed.`)) {
+        if (preservePrevious) state.scheduleAdjustments.pop();
+        else state.scheduleOffset -= change;
         return;
     }
     saveState();
+    const clearedMissedRest = removeMissedEntriesNowOnRestDays();
     renderWorkout();
     renderCalendar();
-    statusMessage.textContent = `Rotation shifted ${wording}. Today is now ${after}.`;
+    statusMessage.textContent = `Rotation shifted ${wording}${preservePrevious ? " from today onward" : ""}. Today is now ${workoutForDate(today).name}.${clearedMissedRest ? " A missed marker that moved onto a rest day was cleared." : ""}`;
 }
 
 document.querySelector("#shift-earlier").addEventListener("click", () => shiftRotation("earlier"));
@@ -1195,23 +1666,116 @@ document.addEventListener("visibilitychange", () => {
 });
 renderTimer();
 
+// Session length timer
+const SESSION_TIMER_KEY = "liftTrackerSessionTimerV1";
+let sessionTimerState = {
+    elapsedSeconds: 0,
+    running: false,
+    startedAt: null,
+    ...loadJSON(SESSION_TIMER_KEY, {})
+};
+let sessionTimerInterval = null;
+
+function getSessionElapsedSeconds() {
+    const liveSeconds = sessionTimerState.running && sessionTimerState.startedAt
+        ? (Date.now() - sessionTimerState.startedAt) / 1000
+        : 0;
+    return Math.max(0, Math.floor(sessionTimerState.elapsedSeconds + liveSeconds));
+}
+
+function formatSessionTime(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remaining = seconds % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`;
+}
+
+function saveSessionTimer() {
+    localStorage.setItem(SESSION_TIMER_KEY, JSON.stringify(sessionTimerState));
+}
+
+function renderSessionTimer() {
+    document.querySelector("#session-timer-display").textContent = formatSessionTime(getSessionElapsedSeconds());
+    document.querySelector("#session-timer-toggle").textContent = sessionTimerState.running ? "Pause session" : getSessionElapsedSeconds() ? "Resume session" : "Start session";
+}
+
+function startSessionTimer() {
+    if (sessionTimerState.running) {
+        sessionTimerState.elapsedSeconds = getSessionElapsedSeconds();
+        sessionTimerState.running = false;
+        sessionTimerState.startedAt = null;
+        clearInterval(sessionTimerInterval);
+        sessionTimerInterval = null;
+    } else {
+        sessionTimerState.running = true;
+        sessionTimerState.startedAt = Date.now();
+        sessionTimerInterval = setInterval(renderSessionTimer, 1000);
+    }
+    saveSessionTimer();
+    renderSessionTimer();
+}
+
+function pauseSessionTimer() {
+    if (!sessionTimerState.running) return;
+    sessionTimerState.elapsedSeconds = getSessionElapsedSeconds();
+    sessionTimerState.running = false;
+    sessionTimerState.startedAt = null;
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+    saveSessionTimer();
+    renderSessionTimer();
+}
+
+function resetSessionTimer() {
+    if (getSessionElapsedSeconds() > 0 && !window.confirm("Reset the session length timer to zero?")) return;
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+    sessionTimerState = { elapsedSeconds: 0, running: false, startedAt: null };
+    saveSessionTimer();
+    renderSessionTimer();
+}
+
+document.querySelector("#session-timer-toggle").addEventListener("click", startSessionTimer);
+document.querySelector("#session-timer-reset").addEventListener("click", resetSessionTimer);
+if (sessionTimerState.running) sessionTimerInterval = setInterval(renderSessionTimer, 1000);
+renderSessionTimer();
+
 // Appearance
 const APPEARANCE_KEY = "liftTrackerAppearance";
 const appearanceDialog = document.querySelector("#appearance-dialog");
-let savedAppearance = loadJSON(APPEARANCE_KEY, { mode: "system", accent: "#72e586" });
+let savedAppearance = {
+    mode: "system",
+    accent: "#72e586",
+    showRestTimer: true,
+    showSessionTimer: false,
+    weightUnit,
+    ...loadJSON(APPEARANCE_KEY, {})
+};
 let appearanceDraft = { ...savedAppearance };
+
+function updateToolVisibility(appearance = savedAppearance) {
+    const isRest = workoutForDate(viewedDate)?.isRest;
+    document.querySelector("#rest-timer").hidden = isRest || !appearance.showRestTimer;
+    document.querySelector("#session-timer").hidden = isRest || !appearance.showSessionTimer;
+    document.body.classList.toggle("rest-timer-enabled", !isRest && appearance.showRestTimer);
+}
 
 function applyAppearance(appearance) {
     document.documentElement.dataset.theme = appearance.mode;
     document.documentElement.style.setProperty("--accent", appearance.accent);
     const light = appearance.mode === "light" || (appearance.mode === "system" && matchMedia("(prefers-color-scheme: light)").matches);
     document.querySelector('meta[name="theme-color"]').content = light ? "#f3f6f3" : appearance.mode === "oled" ? "#000000" : "#101311";
+    updateToolVisibility(appearance);
 }
 
 function renderAppearanceControls() {
     const radio = document.querySelector(`input[name="theme-mode"][value="${appearanceDraft.mode}"]`);
     if (radio) radio.checked = true;
     document.querySelector("#custom-accent").value = appearanceDraft.accent;
+    document.querySelector("#show-rest-timer").checked = appearanceDraft.showRestTimer;
+    document.querySelector("#show-session-timer").checked = appearanceDraft.showSessionTimer;
+    const unitRadio = document.querySelector(`input[name="weight-unit"][value="${appearanceDraft.weightUnit || weightUnit}"]`);
+    if (unitRadio) unitRadio.checked = true;
     document.querySelectorAll("#accent-options button").forEach((button) => {
         button.classList.toggle("active", button.dataset.accent.toLowerCase() === appearanceDraft.accent.toLowerCase());
     });
@@ -1230,9 +1794,14 @@ function closeAppearance() {
 
 function saveAppearance() {
     savedAppearance = { ...appearanceDraft };
+    weightUnit = savedAppearance.weightUnit || "kg";
+    localStorage.setItem(UNIT_KEY, JSON.stringify(weightUnit));
     localStorage.setItem(APPEARANCE_KEY, JSON.stringify(savedAppearance));
     applyAppearance(savedAppearance);
     appearanceDialog.close();
+    document.querySelectorAll(".unit-label").forEach((label) => { label.textContent = weightUnit; });
+    renderWorkout();
+    if (!document.querySelector("#progress-view").hidden) renderProgress();
 }
 
 document.querySelector("#open-appearance").addEventListener("click", openAppearance);
@@ -1244,6 +1813,9 @@ document.querySelectorAll('input[name="theme-mode"]').forEach((radio) => {
         appearanceDraft.mode = radio.value;
         applyAppearance(appearanceDraft);
     });
+});
+document.querySelectorAll('input[name="weight-unit"]').forEach((radio) => {
+    radio.addEventListener("change", () => { appearanceDraft.weightUnit = radio.value; });
 });
 document.querySelectorAll("#accent-options button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1257,7 +1829,16 @@ document.querySelector("#custom-accent").addEventListener("input", (event) => {
     applyAppearance(appearanceDraft);
     renderAppearanceControls();
 });
+document.querySelector("#show-rest-timer").addEventListener("change", (event) => {
+    appearanceDraft.showRestTimer = event.target.checked;
+    updateToolVisibility(appearanceDraft);
+});
+document.querySelector("#show-session-timer").addEventListener("change", (event) => {
+    appearanceDraft.showSessionTimer = event.target.checked;
+    updateToolVisibility(appearanceDraft);
+});
 applyAppearance(savedAppearance);
+document.querySelectorAll(".unit-label").forEach((label) => { label.textContent = weightUnit; });
 
 document.querySelector("#edit-exercises").addEventListener("click", openCatalog);
 document.querySelector("#manage-exercises").addEventListener("click", openCatalog);

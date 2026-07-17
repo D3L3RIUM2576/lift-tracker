@@ -131,6 +131,14 @@
                 </div>
             </section>
 
+            <section class="session-timer" id="session-timer" aria-label="Session length timer">
+                <div><span>Session length</span><strong id="session-timer-display">00:00:00</strong></div>
+                <div class="session-timer-actions">
+                    <button id="session-timer-toggle" type="button">Start session</button>
+                    <button id="session-timer-reset" type="button">Reset</button>
+                </div>
+            </section>
+
             <form id="workout-form">
                 <section aria-labelledby="exercises-heading">
                 <div class="section-heading">
@@ -151,6 +159,7 @@
                 <div class="rest-icon">☾</div>
                 <h2>Recovery day</h2>
                 <p>Your next training day is shown below. Rest days advance automatically.</p>
+                <button id="skip-rest-day" type="button">Skip rest and train today</button>
             </section>
         </section>
 
@@ -202,6 +211,7 @@
                         <button id="shift-earlier" type="button">← One day earlier</button>
                         <button id="shift-later" type="button">One day later →</button>
                     </div>
+                    <label class="preserve-history-toggle"><input id="preserve-previous-dates" type="checkbox" checked> Preserve previous dates</label>
                 </div>
             </section>
         </section>
@@ -212,6 +222,7 @@
                     <p class="eyebrow">Strength analytics</p>
                     <h1>Progress</h1>
                 </div>
+                <button class="progress-settings-button" id="open-progress-settings" type="button">Customise</button>
             </header>
 
             <section class="progress-controls" aria-label="Progress filters">
@@ -226,16 +237,45 @@
                         <option value="maxReps">Best set reps</option>
                     </select>
                 </label>
+                <label>Graph view
+                    <select id="progress-graph-mode">
+                        <option value="combined">Combined overview</option>
+                        <option value="strength">Strength only</option>
+                        <option value="bodyweight">Bodyweight only</option>
+                    </select>
+                </label>
+                <label>Visible date range
+                    <span class="graph-zoom-controls">
+                        <button id="graph-zoom-in" type="button" aria-label="Zoom in to a shorter date range">−</button>
+                        <select id="graph-range">
+                            <option value="30">Last 30 days</option>
+                            <option value="90" selected>Last 3 months</option>
+                            <option value="180">Last 6 months</option>
+                            <option value="365">Last year</option>
+                            <option value="all">All time</option>
+                        </select>
+                        <button id="graph-zoom-out" type="button" aria-label="Zoom out to a longer date range">+</button>
+                    </span>
+                </label>
             </section>
 
-            <section class="record-grid" aria-label="Personal records">
+            <section class="analytics-overview" data-progress-section="overview" aria-label="Training overview">
+                <article><span>This week</span><strong id="weekly-volume">0 kg</strong><small id="weekly-workouts">0 workouts</small></article>
+                <article><span>This month</span><strong id="monthly-volume">0 kg</strong><small id="monthly-workouts">0 workouts</small></article>
+                <article><span>Current streak</span><strong id="current-streak">0</strong><small>scheduled workouts</small></article>
+                <article><span>Longest streak</span><strong id="longest-streak">0</strong><small>scheduled workouts</small></article>
+                <article><span>30-day frequency</span><strong id="training-frequency">0</strong><small>sessions per week</small></article>
+                <article><span>Consistency</span><strong id="training-consistency">—</strong><small>planned sessions completed</small></article>
+            </section>
+
+            <section class="record-grid" data-progress-section="records" aria-label="Personal records">
                 <article><span>Estimated 1RM</span><strong id="record-one-rm">—</strong><small id="record-one-rm-date"></small></article>
                 <article><span>Heaviest weight</span><strong id="record-weight">—</strong><small id="record-weight-date"></small></article>
                 <article><span>Best set volume</span><strong id="record-set-volume">—</strong><small id="record-set-volume-date"></small></article>
                 <article><span>Most reps</span><strong id="record-reps">—</strong><small id="record-reps-date"></small></article>
             </section>
 
-            <section class="chart-card">
+            <section class="chart-card" data-progress-section="graph">
                 <div class="section-heading">
                     <h2 id="chart-title">Estimated 1RM</h2>
                     <span id="chart-change"></span>
@@ -246,7 +286,29 @@
                 </div>
             </section>
 
-            <section class="history-card">
+            <section class="phase-card" data-progress-section="phases">
+                <div class="section-heading"><h2>Training phases</h2><span>Cut, maintain or bulk</span></div>
+                <form class="phase-form" id="phase-form">
+                    <label>Phase <select id="phase-type"><option value="cut">Cut</option><option value="maintain">Maintain</option><option value="bulk">Bulk</option></select></label>
+                    <label>From <input id="phase-start" type="date" required></label>
+                    <label>To <input id="phase-end" type="date" required></label>
+                    <button type="submit">Add phase</button>
+                </form>
+                <div id="phase-list" class="phase-list"></div>
+            </section>
+
+            <section class="goals-card" data-progress-section="goals">
+                <div class="section-heading"><h2>Strength goals</h2><span>Track PR readiness</span></div>
+                <form class="goal-form" id="goal-form">
+                    <label>Exercise <select id="goal-exercise"></select></label>
+                    <label><span>Goal weight (<span class="unit-label">kg</span>)</span><input id="goal-weight" type="number" min="0" step="0.5" required></label>
+                    <label>Reps <input id="goal-reps" type="number" min="1" max="15" value="1" required></label>
+                    <button type="submit">Add goal</button>
+                </form>
+                <div id="goal-list" class="goal-list"></div>
+            </section>
+
+            <section class="history-card" data-progress-section="history">
                 <div class="section-heading">
                     <h2>Exercise history</h2>
                     <span id="history-count">0 sessions</span>
@@ -254,7 +316,51 @@
                 <div class="exercise-history" id="exercise-history"></div>
             </section>
 
-            <section class="recent-workouts-card">
+            <section class="compound-card" data-progress-section="compounds">
+                <div class="section-heading"><h2>Compound strength</h2><span>Estimated 1RM history</span></div>
+                <div class="compound-grid" id="compound-grid"></div>
+            </section>
+
+            <section class="rep-performance-card" data-progress-section="rep-performance">
+                <div class="section-heading"><h2>Best performance by reps</h2><span>Selected exercise</span></div>
+                <label class="rep-selector">Repetition target
+                    <select id="rep-target"></select>
+                </label>
+                <div id="rep-performance"></div>
+            </section>
+
+            <section class="muscle-volume-card" data-progress-section="muscle-volume">
+                <div class="section-heading"><h2>Volume by muscle group</h2><span>Last 30 days</span></div>
+                <div class="horizontal-bars" id="muscle-volume-bars"></div>
+            </section>
+
+            <section class="comparison-card" data-progress-section="comparison">
+                <div class="section-heading"><h2>Compare date ranges</h2><span id="comparison-exercise-name"></span></div>
+                <div class="comparison-inputs">
+                    <fieldset><legend>Range A</legend><label>From <input id="compare-a-start" type="date"></label><label>To <input id="compare-a-end" type="date"></label></fieldset>
+                    <fieldset><legend>Range B</legend><label>From <input id="compare-b-start" type="date"></label><label>To <input id="compare-b-end" type="date"></label></fieldset>
+                </div>
+                <button id="run-comparison" type="button">Compare ranges</button>
+                <div class="comparison-results" id="comparison-results"></div>
+            </section>
+
+            <section class="bodyweight-card" data-progress-section="bodyweight">
+                <div class="section-heading"><h2>Bodyweight history</h2><span id="bodyweight-change"></span></div>
+                <form class="bodyweight-form" id="bodyweight-form">
+                    <label>Date <input id="bodyweight-date" type="date" required></label>
+                    <label><span>Weight (<span class="unit-label">kg</span>)</span><input id="bodyweight-value" type="number" min="20" max="900" step="0.1" required></label>
+                    <button type="submit">Add entry</button>
+                </form>
+                <div class="bodyweight-history" id="bodyweight-history"></div>
+            </section>
+
+            <section class="programming-card" data-progress-section="programming">
+                <div class="section-heading"><h2>Split analysis</h2><span>Estimated weekly coverage</span></div>
+                <div class="weekly-muscle-sets" id="weekly-muscle-sets"></div>
+                <div class="analysis-notices" id="analysis-notices"></div>
+            </section>
+
+            <section class="recent-workouts-card" data-progress-section="recent">
                 <div class="section-heading">
                     <h2>Recent completed workouts</h2>
                     <span id="completed-workout-count"></span>
@@ -399,12 +505,47 @@
                         <label class="custom-colour">Custom <input id="custom-accent" type="color" value="#72e586"></label>
                     </div>
                 </fieldset>
+                <fieldset>
+                    <legend>Workout tools</legend>
+                    <div class="tool-toggles">
+                        <label><input id="show-rest-timer" type="checkbox"> Show floating rest timer</label>
+                        <label><input id="show-session-timer" type="checkbox"> Show session length timer</label>
+                    </div>
+                </fieldset>
+                <fieldset>
+                    <legend>Units</legend>
+                    <div class="mode-options">
+                        <label><input type="radio" name="weight-unit" value="kg"> Kilograms</label>
+                        <label><input type="radio" name="weight-unit" value="lb"> Pounds</label>
+                    </div>
+                </fieldset>
             </div>
             <footer class="catalog-footer">
                 <p>Appearance is saved on this device.</p>
                 <button class="save-catalog" id="save-appearance" type="button">Save appearance</button>
             </footer>
         </form>
+    </dialog>
+
+    <dialog class="appearance-dialog" id="progress-settings-dialog">
+        <form class="appearance-editor" id="progress-settings-form">
+            <header class="catalog-header">
+                <div><p class="eyebrow">Progress layout</p><h2>Visible categories</h2></div>
+                <button class="close-dialog" id="close-progress-settings" type="button" aria-label="Close progress settings">×</button>
+            </header>
+            <div class="appearance-body tool-toggles" id="progress-section-options"></div>
+            <footer class="catalog-footer"><p>Hidden categories can be restored here.</p><button class="save-catalog" id="save-progress-settings" type="button">Save layout</button></footer>
+        </form>
+    </dialog>
+
+    <dialog class="pr-dialog" id="pr-dialog">
+        <div class="pr-celebration">
+            <div class="pr-icon">🏆</div>
+            <p class="eyebrow">New personal record</p>
+            <h2 id="pr-title">Strength PR!</h2>
+            <div id="pr-records"></div>
+            <button id="close-pr" type="button">Continue</button>
+        </div>
     </dialog>
 </body>
 </html>
