@@ -436,14 +436,14 @@ h1 {
 }
 
 .muscle-zone.secondary-hit {
-    fill: var(--accent);
+    fill: var(--zone-colour, var(--accent));
     fill-opacity: 0.38;
 }
 
 .muscle-zone.primary-hit {
-    fill: var(--accent);
+    fill: var(--zone-colour, var(--accent));
     fill-opacity: 0.95;
-    stroke: var(--accent);
+    stroke: var(--zone-colour, var(--accent));
 }
 
 .coverage-lists {
@@ -465,17 +465,18 @@ h1 {
 }
 
 .muscle-chip {
+    --chip-colour: var(--accent);
     padding: 6px 8px;
-    background: color-mix(in srgb, var(--accent) 18%, var(--surface-light));
+    background: color-mix(in srgb, var(--chip-colour) 18%, var(--surface-light));
     color: var(--text);
-    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    border: 1px solid color-mix(in srgb, var(--chip-colour) 40%, var(--border));
     border-radius: 999px;
     font-size: 0.68rem;
 }
 
 .muscle-chips.secondary .muscle-chip {
-    background: var(--surface-light);
-    border-color: var(--border);
+    background: color-mix(in srgb, var(--chip-colour) 9%, var(--surface-light));
+    border-color: color-mix(in srgb, var(--chip-colour) 22%, var(--border));
     color: var(--muted);
 }
 
@@ -3322,6 +3323,15 @@ body.rest-timer-enabled .back-to-top { bottom: 128px; }
 }
 
 @media (max-width: 600px) {
+    .back-to-top {
+        z-index: 60;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: calc(76px + env(safe-area-inset-bottom));
+        min-width: 54px;
+        min-height: 44px;
+    }
+    body.rest-timer-enabled .back-to-top { bottom: calc(138px + env(safe-area-inset-bottom)); }
+
     .split-card > .section-heading { align-items: stretch; flex-direction: column; gap: 10px; }
     .split-card .split-buttons { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
     .split-card .split-title { grid-column: 1 / -1; margin: 0; padding-bottom: 3px; }

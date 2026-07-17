@@ -33,6 +33,17 @@ const ONBOARDING_KEY = "liftTrackerOnboardingV1";
 const AUTOSAVE_KEY = "liftTrackerAutosaveStableV1";
 const RECAPS_KEY = "liftTrackerRecapsV1";
 const RECAP_SHOWN_KEY = "liftTrackerRecapShownV1";
+const REST_TIMER_DEFAULT_MIGRATION_KEY = "liftTrackerRestTimerDefaultOffV1";
+
+const MUSCLE_COLOURS = {
+    Chest: "#ff7568", Back: "#62a8ff", Shoulders: "#ad83ff", Biceps: "#ffad55",
+    Triceps: "#ff8d5f", Forearms: "#65c7c2", Quads: "#72e586", Hamstrings: "#55cfa5",
+    Glutes: "#e77fd1", Calves: "#91d66f", Core: "#f0c95e", "Full Body": "#72e586"
+};
+
+function muscleColour(muscle) {
+    return MUSCLE_COLOURS[canonicalMuscle(muscle)] || "var(--accent)";
+}
 
 function restoreAutosaveIfNeeded() {
     const snapshot = loadJSON(AUTOSAVE_KEY, null);
@@ -372,8 +383,7 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
     const card = document.createElement("article");
     card.className = `exercise-card${savedExercise.completed ? " completed" : ""}`;
     card.dataset.exerciseId = exercise.id;
-    const muscleColours = { Chest: "#ff7568", Back: "#62a8ff", Shoulders: "#ad83ff", Biceps: "#ffad55", Triceps: "#ff8d5f", Quads: "#72e586", Hamstrings: "#55cfa5", Glutes: "#e77fd1", Calves: "#91d66f", Core: "#f0c95e", Abs: "#f0c95e" };
-    card.style.setProperty("--muscle-accent", muscleColours[canonicalMuscle(exercise.primaryMuscle)] || "var(--accent)");
+    card.style.setProperty("--muscle-accent", muscleColour(exercise.primaryMuscle));
     const notes = loadJSON(EXERCISE_NOTES_KEY, {});
     const alternatives = allExercises().filter((item) => item.id !== exercise.id && canonicalMuscle(item.primaryMuscle) === canonicalMuscle(exercise.primaryMuscle)).sort((a, b) => (a.equipment === exercise.equipment ? -1 : 1) - (b.equipment === exercise.equipment ? -1 : 1) || a.name.localeCompare(b.name));
     const restSeconds = exerciseRestSeconds(exercise);
@@ -485,15 +495,24 @@ function renderMuscleCoverage(exercises) {
     const primary = [...primaryCounts].sort((a, b) => b[1] - a[1]);
     const secondary = [...secondaryCounts].filter(([muscle]) => !primaryCounts.has(muscle)).sort((a, b) => b[1] - a[1]);
     const chips = (items) => items.length
-        ? items.map(([muscle, count]) => `<span class="muscle-chip">${escapeHTML(muscle)}${count > 1 ? ` ×${count}` : ""}</span>`).join("")
+        ? items.map(([muscle, count]) => `<span class="muscle-chip" style="--chip-colour:${muscleColour(muscle)}">${escapeHTML(muscle)}${count > 1 ? ` ×${count}` : ""}</span>`).join("")
         : '<span class="muscle-chip">None</span>';
     document.querySelector("#primary-muscles").innerHTML = chips(primary);
     document.querySelector("#secondary-muscles").innerHTML = chips(secondary);
 
     const primaryRegions = new Set(primary.flatMap(([muscle]) => diagramRegionsForMuscle(muscle)));
     const secondaryRegions = new Set(secondary.flatMap(([muscle]) => diagramRegionsForMuscle(muscle)));
+    const primaryRegionColours = new Map();
+    const secondaryRegionColours = new Map();
+    primary.forEach(([muscle]) => diagramRegionsForMuscle(muscle).forEach((region) => {
+        if (!primaryRegionColours.has(region)) primaryRegionColours.set(region, muscleColour(muscle));
+    }));
+    secondary.forEach(([muscle]) => diagramRegionsForMuscle(muscle).forEach((region) => {
+        if (!secondaryRegionColours.has(region)) secondaryRegionColours.set(region, muscleColour(muscle));
+    }));
     document.querySelectorAll(".muscle-zone").forEach((zone) => {
         const region = zone.dataset.muscle;
+        zone.style.setProperty("--zone-colour", primaryRegionColours.get(region) || secondaryRegionColours.get(region) || "var(--accent)");
         zone.classList.toggle("primary-hit", primaryRegions.has(region));
         zone.classList.toggle("secondary-hit", !primaryRegions.has(region) && secondaryRegions.has(region));
     });
@@ -1535,8 +1554,16 @@ document.querySelectorAll(".tab").forEach((tab) => {
 window.addEventListener("resize", updateTabIndicator);
 setTimeout(updateTabIndicator, 0);
 const backToTopButton = document.querySelector("#back-to-top");
-function updateBackToTop() { backToTopButton.hidden = window.scrollY < 520; }
+function currentScrollTop() {
+    return Math.max(window.scrollY || 0, document.documentElement.scrollTop || 0, document.body.scrollTop || 0);
+}
+function updateBackToTop() {
+    const threshold = matchMedia("(max-width: 600px)").matches ? 220 : 520;
+    backToTopButton.hidden = currentScrollTop() < threshold;
+}
 window.addEventListener("scroll", updateBackToTop, { passive: true });
+document.addEventListener("scroll", updateBackToTop, { passive: true, capture: true });
+window.visualViewport?.addEventListener("scroll", updateBackToTop, { passive: true });
 backToTopButton.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 document.querySelector("#progress-exercise").addEventListener("change", renderProgress);
@@ -2400,6 +2427,11 @@ let savedAppearance = {
     weightUnit,
     ...loadJSON(APPEARANCE_KEY, {})
 };
+if (!localStorage.getItem(REST_TIMER_DEFAULT_MIGRATION_KEY)) {
+    savedAppearance.showRestTimer = false;
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(savedAppearance));
+    localStorage.setItem(REST_TIMER_DEFAULT_MIGRATION_KEY, "1");
+}
 let appearanceDraft = { ...savedAppearance };
 
 function updateToolVisibility(appearance = savedAppearance) {
