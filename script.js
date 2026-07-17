@@ -2,17 +2,17 @@ const defaultSplit = [
     {
         id: "push",
         name: "Push",
-        exerciseIds: ["barbell-bench-press", "machine-shoulder-press", "dumbbell-lateral-raise", "tricep-pushdown", "overhead-cable-extension", "single-arm-pushdown"]
+        exerciseIds: ["barbell-bench-press", "incline-dumbbell-press", "dumbbell-shoulder-press", "seated-dumbbell-lateral-raise", "cable-lateral-raise", "v-bar-tricep-pushdown", "overhead-v-bar-tricep-extension"]
     },
     {
         id: "pull",
         name: "Pull",
-        exerciseIds: ["lat-pulldown", "seated-cable-row", "reverse-pec-deck", "barbell-curl", "hammer-curl"]
+        exerciseIds: ["pull-up", "lat-pulldown", "seated-cable-row", "straight-arm-pulldown", "face-pull", "incline-curl", "rope-hammer-curl", "single-arm-rear-delt-cable-fly"]
     },
     {
         id: "legs",
         name: "Legs",
-        exerciseIds: ["back-squat", "leg-press", "seated-leg-curl", "leg-extension", "standing-calf-raise"]
+        exerciseIds: ["leg-press", "seated-leg-curl", "leg-extension", "lying-leg-curl", "single-leg-box-squat", "dumbbell-rdl", "cable-crunch", "hanging-leg-raise"]
     },
     { id: "rest", name: "Rest", isRest: true, exerciseIds: [] }
 ];
@@ -27,12 +27,31 @@ const PHASES_KEY = "liftTrackerTrainingPhasesV1";
 const GOALS_KEY = "liftTrackerStrengthGoalsV1";
 const PROGRESS_LAYOUT_KEY = "liftTrackerProgressLayoutV1";
 const UNIT_KEY = "liftTrackerWeightUnitV1";
+const ONBOARDING_KEY = "liftTrackerOnboardingV1";
+const AUTOSAVE_KEY = "liftTrackerAutosaveStableV1";
+
+function restoreAutosaveIfNeeded() {
+    const snapshot = loadJSON(AUTOSAVE_KEY, null);
+    if (!snapshot?.data || (localStorage.getItem(STATE_KEY) && localStorage.getItem(HISTORY_KEY))) return false;
+    Object.entries(snapshot.data).forEach(([key, value]) => {
+        if (key.startsWith("liftTracker") && key !== AUTOSAVE_KEY && localStorage.getItem(key) === null && typeof value === "string") {
+            localStorage.setItem(key, value);
+        }
+    });
+    return true;
+}
+
+const autosaveRestored = restoreAutosaveIfNeeded();
 let weightUnit = loadJSON(UNIT_KEY, "kg");
 const today = startOfDay(new Date());
 let viewedDate = today;
 let calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
 let state = loadState();
 let history = loadJSON(HISTORY_KEY, {});
+let scheduleUndo = null;
+let scheduleUndoTimer = null;
+let autosaveTimer = null;
+let autosaveEnabled = true;
 state.customExercises.forEach((exercise) => catalogById.set(exercise.id, exercise));
 
 const exerciseList = document.querySelector("#exercise-list");
@@ -120,11 +139,63 @@ function loadState() {
 
 function saveState() {
     localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    queueAutosave();
 }
 
 function saveHistory() {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    queueAutosave();
 }
+
+function writeAutosaveSnapshot() {
+    if (!autosaveEnabled) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    const data = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith("liftTracker") && key !== AUTOSAVE_KEY) data[key] = localStorage.getItem(key);
+    }
+    const savedAt = new Date().toISOString();
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ schema: 1, compatibleSince: 1, savedAt, data }));
+    const status = document.querySelector("#autosave-status");
+    if (status) status.textContent = `Autosaved on this device at ${new Intl.DateTimeFormat("en-AU", { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(savedAt))}. Compatible with future Lift Tracker updates.`;
+}
+
+function queueAutosave() {
+    if (!autosaveEnabled) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(writeAutosaveSnapshot, 500);
+}
+
+function scheduleSnapshot() {
+    return { state: structuredClone(state), history: structuredClone(history) };
+}
+
+function offerScheduleUndo(message, snapshot) {
+    scheduleUndo = snapshot;
+    clearTimeout(scheduleUndoTimer);
+    document.querySelector("#undo-message").textContent = message;
+    document.querySelector("#undo-toast").hidden = false;
+    scheduleUndoTimer = setTimeout(() => {
+        scheduleUndo = null;
+        document.querySelector("#undo-toast").hidden = true;
+    }, 12000);
+}
+
+document.querySelector("#undo-schedule").addEventListener("click", () => {
+    if (!scheduleUndo) return;
+    state = structuredClone(scheduleUndo.state);
+    history = structuredClone(scheduleUndo.history);
+    saveState();
+    saveHistory();
+    scheduleUndo = null;
+    clearTimeout(scheduleUndoTimer);
+    document.querySelector("#undo-toast").hidden = true;
+    renderWorkout();
+    renderCalendar();
+    statusMessage.textContent = "Schedule change undone.";
+});
 
 function scheduleIndexFor(date) {
     const startDate = dateFromKey(state.startDate);
@@ -340,6 +411,7 @@ function saveDraft() {
     const scheduled = workoutForDate(viewedDate);
     if (scheduled && !scheduled.isRest && exerciseList.children.length) {
         localStorage.setItem(DRAFT_PREFIX + dateKey(viewedDate), JSON.stringify(readWorkoutFromPage()));
+        queueAutosave();
     }
 }
 
@@ -1016,7 +1088,12 @@ document.querySelector("#bodyweight-form").addEventListener("submit", (event) =>
     event.preventDefault();
     const date = document.querySelector("#bodyweight-date").value;
     const weight = storedWeight(document.querySelector("#bodyweight-value").value);
-    if (!date || !Number.isFinite(weight) || weight <= 0) return;
+    const message = document.querySelector("#bodyweight-message");
+    if (!date || !Number.isFinite(weight) || weight <= 0) {
+        message.textContent = `Enter a valid bodyweight in ${weightUnit}.`;
+        return;
+    }
+    message.textContent = "";
     const entries = loadJSON(BODYWEIGHT_KEY, []).filter((entry) => entry.date !== date);
     entries.push({ date, weight });
     entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -1030,7 +1107,12 @@ document.querySelector("#phase-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const start = document.querySelector("#phase-start").value;
     const end = document.querySelector("#phase-end").value;
-    if (!start || !end || end < start) return;
+    const message = document.querySelector("#phase-message");
+    if (!start || !end || end < start) {
+        message.textContent = "Choose an end date on or after the start date.";
+        return;
+    }
+    message.textContent = "";
     const phases = loadJSON(PHASES_KEY, []);
     phases.push({ id: `phase-${Date.now()}`, type: document.querySelector("#phase-type").value, start, end });
     localStorage.setItem(PHASES_KEY, JSON.stringify(phases));
@@ -1040,7 +1122,12 @@ document.querySelector("#goal-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const weight = storedWeight(document.querySelector("#goal-weight").value);
     const reps = Number(document.querySelector("#goal-reps").value);
-    if (!weight || !reps) return;
+    const message = document.querySelector("#goal-message");
+    if (!weight || !reps || reps < 1 || reps > 15) {
+        message.textContent = `Enter a goal weight in ${weightUnit} and between 1 and 15 repetitions.`;
+        return;
+    }
+    message.textContent = "";
     const goals = loadJSON(GOALS_KEY, []);
     goals.push({ id: `goal-${Date.now()}`, exerciseId: document.querySelector("#goal-exercise").value, weight, reps });
     localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
@@ -1201,6 +1288,8 @@ document.querySelector("#backup-file").addEventListener("change", (event) => imp
 
 workoutForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const loggedSetCount = [...document.querySelectorAll(".set-row")].filter((row) => Number(row.querySelector(".weight-input").value) > 0 && Number(row.querySelector(".reps-input").value) > 0).length;
+    if (!loggedSetCount && !window.confirm("No weighted sets have been entered. Save this workout as completed anyway?")) return;
     pauseSessionTimer();
     const workout = readWorkoutFromPage();
     sessionTimerState = { elapsedSeconds: 0, running: false, startedAt: null };
@@ -1225,6 +1314,7 @@ document.querySelector("#miss-workout").addEventListener("click", () => {
     }
     const warning = viewedDate < today ? " This will also recalculate every scheduled day after it." : "";
     if (!window.confirm(`Mark ${scheduled.name} on ${formatShortDate(dateKey(viewedDate))} as missed and move the split forward one day?${warning}`)) return;
+    const undo = scheduleSnapshot();
     history[dateKey(viewedDate)] = {
         date: dateKey(viewedDate), status: "missed", split: scheduled.name, splitIndex: scheduled.index
     };
@@ -1232,12 +1322,14 @@ document.querySelector("#miss-workout").addEventListener("click", () => {
     localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
     renderWorkout();
     statusMessage.textContent = `${scheduled.name} marked missed. It repeats on ${formatShortDate(dateKey(addDays(viewedDate, 1)))}.`;
+    offerScheduleUndo(`${scheduled.name} marked missed.`, undo);
 });
 
 document.querySelector("#skip-rest-day").addEventListener("click", () => {
     const scheduled = workoutForDate(viewedDate);
     if (!scheduled.isRest) return;
     if (!window.confirm(`Skip this rest day and bring the next workout forward to ${formatShortDate(dateKey(viewedDate))}?`)) return;
+    const undo = scheduleSnapshot();
     delete history[dateKey(viewedDate)];
     state.scheduleAdjustments.push({ effectiveDate: dateKey(viewedDate), delta: 1 });
     removeMissedEntriesNowOnRestDays();
@@ -1245,6 +1337,7 @@ document.querySelector("#skip-rest-day").addEventListener("click", () => {
     renderWorkout();
     renderCalendar();
     statusMessage.textContent = `Rest skipped. ${workoutForDate(viewedDate).name} is now scheduled today.`;
+    offerScheduleUndo("Rest day skipped.", undo);
 });
 
 document.querySelector("#return-today").addEventListener("click", () => viewWorkoutDate(today));
@@ -1265,6 +1358,7 @@ document.querySelector("#today-button").addEventListener("click", () => {
 });
 
 function shiftRotation(direction) {
+    const undo = scheduleSnapshot();
     const before = workoutForDate(today).name;
     const change = direction === "earlier" ? 1 : -1;
     const preservePrevious = document.querySelector("#preserve-previous-dates").checked;
@@ -1284,6 +1378,7 @@ function shiftRotation(direction) {
     renderWorkout();
     renderCalendar();
     statusMessage.textContent = `Rotation shifted ${wording}${preservePrevious ? " from today onward" : ""}. Today is now ${workoutForDate(today).name}.${clearedMissedRest ? " A missed marker that moved onto a rest day was cleared." : ""}`;
+    offerScheduleUndo(`Rotation shifted ${wording}.`, undo);
 }
 
 document.querySelector("#shift-earlier").addEventListener("click", () => shiftRotation("earlier"));
@@ -1840,6 +1935,194 @@ document.querySelector("#show-session-timer").addEventListener("change", (event)
 applyAppearance(savedAppearance);
 document.querySelectorAll(".unit-label").forEach((label) => { label.textContent = weightUnit; });
 
+const onboardingDialog = document.querySelector("#onboarding-dialog");
+let onboardingStep = 0;
+let onboardingCustomSplit = [
+    { id: "custom-a", name: "Workout A", exerciseIds: [] },
+    { id: "custom-b", name: "Workout B", exerciseIds: [] },
+    { id: "custom-rest", name: "Rest", isRest: true, exerciseIds: [] }
+];
+
+function onboardingChosenSplit() {
+    return document.querySelector('input[name="onboarding-split"]:checked')?.value === "ppl" ? defaultSplit : onboardingCustomSplit;
+}
+
+function renderOnboardingCustomSplit() {
+    const custom = document.querySelector('input[name="onboarding-split"]:checked')?.value === "custom";
+    document.querySelector("#onboarding-split-builder").hidden = !custom;
+    const list = document.querySelector("#onboarding-custom-days");
+    list.innerHTML = onboardingCustomSplit.map((day, index) => `<li data-index="${index}"><span class="day-kind">${day.isRest ? "R" : "W"}</span><input type="text" maxlength="40" value="${escapeHTML(day.name)}" aria-label="Custom split day ${index + 1} name"><div><button type="button" data-action="up" ${index === 0 ? "disabled" : ""} aria-label="Move day up">↑</button><button type="button" data-action="down" ${index === onboardingCustomSplit.length - 1 ? "disabled" : ""} aria-label="Move day down">↓</button><button type="button" data-action="remove" aria-label="Remove day">×</button></div></li>`).join("");
+    list.querySelectorAll("input").forEach((input) => input.addEventListener("input", () => {
+        onboardingCustomSplit[Number(input.closest("li").dataset.index)].name = input.value;
+        populateOnboardingPositions();
+    }));
+    list.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
+        const index = Number(button.closest("li").dataset.index);
+        if (button.dataset.action === "remove") {
+            if (onboardingCustomSplit.length <= 1) return;
+            onboardingCustomSplit.splice(index, 1);
+        } else {
+            const target = button.dataset.action === "up" ? index - 1 : index + 1;
+            if (target < 0 || target >= onboardingCustomSplit.length) return;
+            [onboardingCustomSplit[index], onboardingCustomSplit[target]] = [onboardingCustomSplit[target], onboardingCustomSplit[index]];
+        }
+        renderOnboardingCustomSplit();
+        populateOnboardingPositions();
+    }));
+}
+
+function populateOnboardingPositions() {
+    const split = onboardingChosenSplit();
+    const select = document.querySelector("#onboarding-position");
+    const previous = Number(select.value);
+    select.innerHTML = split.map((day, index) => `<option value="${index}">${escapeHTML(day.name)}${day.isRest ? " (recovery day)" : ""}</option>`).join("");
+    select.value = Number.isInteger(previous) && previous < split.length ? String(previous) : "0";
+}
+
+function showOnboardingStep(step) {
+    onboardingStep = Math.max(0, Math.min(3, step));
+    document.querySelectorAll(".onboarding-step").forEach((panel) => { panel.hidden = Number(panel.dataset.step) !== onboardingStep; });
+    document.querySelector("#onboarding-back").hidden = onboardingStep === 0;
+    document.querySelector("#onboarding-next").textContent = onboardingStep === 0 ? "Get started" : onboardingStep === 3 ? "Finish setup" : "Continue";
+    document.querySelector("#onboarding-message").textContent = "";
+}
+
+function openOnboarding() {
+    document.querySelector(`input[name="onboarding-unit"][value="${weightUnit}"]`).checked = true;
+    document.querySelector("#onboarding-start-date").value = dateKey(today);
+    document.querySelector("#onboarding-rest-timer").checked = savedAppearance.showRestTimer;
+    document.querySelector("#onboarding-session-timer").checked = savedAppearance.showSessionTimer;
+    populateOnboardingPositions();
+    renderOnboardingCustomSplit();
+    showOnboardingStep(0);
+    if (!onboardingDialog.open) onboardingDialog.showModal();
+}
+
+function finishOnboarding() {
+    const startInput = document.querySelector("#onboarding-start-date");
+    if (!startInput.value) {
+        document.querySelector("#onboarding-message").textContent = "Choose the date you want tracking to begin.";
+        startInput.focus();
+        return;
+    }
+    const useRecommended = document.querySelector('input[name="onboarding-split"]:checked').value === "ppl";
+    if (useRecommended && completedWorkouts().length && !window.confirm("Apply the recommended PPL schedule? Your completed workout records will stay saved, but the current rotation will be replaced.")) return;
+    if (useRecommended) {
+        state.split = structuredClone(defaultSplit);
+        state.splitName = "Push Pull Legs";
+        state.exerciseRules = [];
+    } else {
+        const splitName = document.querySelector("#onboarding-split-name").value.trim();
+        const validDays = onboardingCustomSplit.every((day) => day.name.trim());
+        if (!splitName || !validDays || !onboardingCustomSplit.some((day) => !day.isRest)) {
+            showOnboardingStep(1);
+            document.querySelector("#onboarding-message").textContent = "Give the split and every day a name, with at least one workout day.";
+            return;
+        }
+        state.split = onboardingCustomSplit.map((day, index) => ({ ...day, id: `custom-${Date.now()}-${index}`, name: day.name.trim(), exerciseIds: [] }));
+        state.splitName = splitName;
+        state.exerciseRules = [];
+    }
+    const selectedToday = Number(document.querySelector("#onboarding-position").value) || 0;
+    const trackingDate = startInput.value;
+    const elapsed = daysBetween(dateFromKey(trackingDate), today);
+    state.startDate = trackingDate;
+    state.trackingStartDate = trackingDate;
+    state.startingIndex = ((selectedToday - elapsed) % state.split.length + state.split.length) % state.split.length;
+    state.scheduleOffset = 0;
+    state.scheduleAdjustments = [];
+    weightUnit = document.querySelector('input[name="onboarding-unit"]:checked').value;
+    savedAppearance = {
+        ...savedAppearance,
+        weightUnit,
+        showRestTimer: document.querySelector("#onboarding-rest-timer").checked,
+        showSessionTimer: document.querySelector("#onboarding-session-timer").checked
+    };
+    localStorage.setItem(UNIT_KEY, JSON.stringify(weightUnit));
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(savedAppearance));
+    localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ completed: true, completedAt: new Date().toISOString() }));
+    saveState();
+    applyAppearance(savedAppearance);
+    document.querySelectorAll(".unit-label").forEach((label) => { label.textContent = weightUnit; });
+    onboardingDialog.close();
+    renderWorkout();
+    renderCalendar();
+    statusMessage.textContent = "Setup complete. Your rotation is ready.";
+}
+
+document.querySelectorAll('input[name="onboarding-split"]').forEach((radio) => radio.addEventListener("change", () => { renderOnboardingCustomSplit(); populateOnboardingPositions(); }));
+document.querySelector("#onboarding-add-workout").addEventListener("click", () => {
+    onboardingCustomSplit.push({ id: `custom-workout-${Date.now()}`, name: `Workout ${String.fromCharCode(65 + onboardingCustomSplit.filter((day) => !day.isRest).length)}`, exerciseIds: [] });
+    renderOnboardingCustomSplit();
+    populateOnboardingPositions();
+});
+document.querySelector("#onboarding-add-rest").addEventListener("click", () => {
+    onboardingCustomSplit.push({ id: `custom-rest-${Date.now()}`, name: "Rest", isRest: true, exerciseIds: [] });
+    renderOnboardingCustomSplit();
+    populateOnboardingPositions();
+});
+document.querySelector("#onboarding-next").addEventListener("click", () => {
+    if (onboardingStep === 2 && !document.querySelector("#onboarding-start-date").value) {
+        document.querySelector("#onboarding-message").textContent = "Choose a tracking start date to continue.";
+        return;
+    }
+    if (onboardingStep === 3) finishOnboarding();
+    else showOnboardingStep(onboardingStep + 1);
+});
+document.querySelector("#onboarding-back").addEventListener("click", () => showOnboardingStep(onboardingStep - 1));
+document.querySelector("#skip-onboarding").addEventListener("click", () => {
+    localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ completed: false, skippedAt: new Date().toISOString() }));
+    onboardingDialog.close();
+});
+document.querySelector("#onboarding-form").addEventListener("submit", (event) => event.preventDefault());
+document.querySelector("#restart-onboarding").addEventListener("click", () => {
+    appearanceDialog.close();
+    openOnboarding();
+});
+
+function draftKeys() {
+    return Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter((key) => key?.startsWith(DRAFT_PREFIX));
+}
+
+document.querySelector("#reset-setup-only").addEventListener("click", () => {
+    const confirmed = window.confirm(
+        "Reset setup only?\n\nThis will reset your split, rotating schedule, missed-day markers, unfinished workout drafts and Progress-page layout.\n\nCompleted workouts, bodyweight, goals, phases, custom exercises, units, theme and timer preferences will stay saved."
+    );
+    if (!confirmed) return;
+    const customExercises = structuredClone(state.customExercises || []);
+    history = Object.fromEntries(Object.entries(history).filter(([, entry]) => entry.status === "complete"));
+    state = {
+        startDate: dateKey(today), trackingStartDate: dateKey(today), startingIndex: 0, scheduleOffset: 0,
+        scheduleAdjustments: [], splitName: "Push Pull Legs", split: structuredClone(defaultSplit), exerciseRules: [], customExercises
+    };
+    draftKeys().forEach((key) => localStorage.removeItem(key));
+    localStorage.removeItem(PROGRESS_LAYOUT_KEY);
+    localStorage.removeItem(ONBOARDING_KEY);
+    saveState();
+    saveHistory();
+    writeAutosaveSnapshot();
+    appearanceDialog.close();
+    renderWorkout();
+    renderCalendar();
+    openOnboarding();
+    document.querySelector("#onboarding-message").textContent = "Your setup was reset. Completed workouts and personal tracking data are still saved.";
+});
+
+document.querySelector("#factory-reset-all").addEventListener("click", () => {
+    const first = window.confirm(
+        "Factory reset Lift Tracker?\n\nThis permanently deletes all Lift Tracker data stored on this device, including workout history, drafts, bodyweight, goals, phases, custom exercises, preferences and autosaves."
+    );
+    if (!first) return;
+    const finalConfirmation = window.confirm("Final confirmation: erase everything and return to first-time setup? This cannot be undone unless you have an exported backup.");
+    if (!finalConfirmation) return;
+    autosaveEnabled = false;
+    clearTimeout(autosaveTimer);
+    Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+        .filter((key) => key?.startsWith("liftTracker"))
+        .forEach((key) => localStorage.removeItem(key));
+    window.location.reload();
+});
+
 document.querySelector("#edit-exercises").addEventListener("click", openCatalog);
 document.querySelector("#manage-exercises").addEventListener("click", openCatalog);
 document.querySelector("#edit-split").addEventListener("click", openSplitEditor);
@@ -1865,6 +2148,16 @@ populateCatalogFilters();
 
 saveState();
 renderWorkout();
+if (!localStorage.getItem(ONBOARDING_KEY)) setTimeout(openOnboarding, 0);
+document.addEventListener("input", queueAutosave);
+document.addEventListener("change", queueAutosave);
+window.addEventListener("pagehide", writeAutosaveSnapshot);
+document.addEventListener("visibilitychange", () => { if (document.hidden) writeAutosaveSnapshot(); });
+queueAutosave();
+if (autosaveRestored) {
+    const status = document.querySelector("#autosave-status");
+    if (status) status.textContent = "Your saved data was restored from the cross-version autosave.";
+}
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
     window.addEventListener("load", () => {

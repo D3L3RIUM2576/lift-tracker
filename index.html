@@ -284,6 +284,8 @@
                     <svg id="progress-chart" viewBox="0 0 700 300" role="img" aria-labelledby="chart-title"></svg>
                     <p class="chart-empty" id="chart-empty">Complete workouts to build your progress graph.</p>
                 </div>
+                <div class="graph-legend" aria-label="Graph legend"><span><i class="strength"></i> Selected lift</span><span><i class="bodyweight"></i> Bodyweight</span><span><i class="phase"></i> Cut, maintain or bulk phase</span></div>
+                <p class="graph-explanation">Combined view normalises each series to show their direction of change. Choose Strength only or Bodyweight only to see actual values on the vertical axis. Estimated 1RM is a formula-based estimate, not a guaranteed maximum attempt.</p>
             </section>
 
             <section class="phase-card" data-progress-section="phases">
@@ -294,6 +296,7 @@
                     <label>To <input id="phase-end" type="date" required></label>
                     <button type="submit">Add phase</button>
                 </form>
+                <p class="form-message" id="phase-message" role="alert"></p>
                 <div id="phase-list" class="phase-list"></div>
             </section>
 
@@ -305,6 +308,7 @@
                     <label>Reps <input id="goal-reps" type="number" min="1" max="15" value="1" required></label>
                     <button type="submit">Add goal</button>
                 </form>
+                <p class="form-message" id="goal-message" role="alert"></p>
                 <div id="goal-list" class="goal-list"></div>
             </section>
 
@@ -351,6 +355,7 @@
                     <label><span>Weight (<span class="unit-label">kg</span>)</span><input id="bodyweight-value" type="number" min="20" max="900" step="0.1" required></label>
                     <button type="submit">Add entry</button>
                 </form>
+                <p class="form-message" id="bodyweight-message" role="alert"></p>
                 <div class="bodyweight-history" id="bodyweight-history"></div>
             </section>
 
@@ -379,6 +384,7 @@
                     <input class="visually-hidden" id="backup-file" type="file" accept="application/json,.json">
                 </div>
                 <p class="backup-status" id="backup-status" role="status" aria-live="polite"></p>
+                <p class="autosave-status" id="autosave-status">Autosave is preparing…</p>
             </section>
         </section>
     </main>
@@ -519,6 +525,19 @@
                         <label><input type="radio" name="weight-unit" value="lb"> Pounds</label>
                     </div>
                 </fieldset>
+                <button class="secondary-settings-action" id="restart-onboarding" type="button">Run setup tutorial again</button>
+                <section class="reset-settings" aria-labelledby="reset-settings-heading">
+                    <h3 id="reset-settings-heading">Reset Lift Tracker</h3>
+                    <article>
+                        <div><strong>Reset setup only</strong><p>Keep completed workouts and personal tracking data, but reset your split, schedule setup and Progress layout.</p></div>
+                        <button id="reset-setup-only" type="button">Reset setup</button>
+                    </article>
+                    <article class="factory-reset-row">
+                        <div><strong>Factory reset everything</strong><p>Delete workouts, drafts, bodyweight, goals, custom exercises, preferences and all setup data from this device.</p></div>
+                        <button id="factory-reset-all" type="button">Erase all data</button>
+                    </article>
+                    <p class="form-message" id="reset-message" role="status"></p>
+                </section>
             </div>
             <footer class="catalog-footer">
                 <p>Appearance is saved on this device.</p>
@@ -537,6 +556,44 @@
             <footer class="catalog-footer"><p>Hidden categories can be restored here.</p><button class="save-catalog" id="save-progress-settings" type="button">Save layout</button></footer>
         </form>
     </dialog>
+
+    <dialog class="onboarding-dialog" id="onboarding-dialog">
+        <form id="onboarding-form">
+            <div class="onboarding-step" data-step="0">
+                <p class="eyebrow">Welcome to Lift Tracker</p>
+                <h2>Set up your training</h2>
+                <p>A <strong>training split</strong> is the way exercises are divided across workout days. For example, Push/Pull/Legs groups pushing muscles, pulling muscles and lower-body exercises on separate days.</p>
+                <p><strong>Push/Pull/Legs (PPL)</strong> is widely used because it is easy to understand, covers the whole body and is a good starting point for beginners. You can edit every day and exercise later.</p>
+                <div class="beginner-note"><strong>How progress estimates work</strong><p>Estimated 1RM predicts a possible one-repetition maximum from a lighter set. Treat it as a progress estimate—not a requirement to attempt a heavy lift. Training volume is weight × repetitions and is most useful when comparing similar exercises.</p></div>
+            </div>
+            <div class="onboarding-step" data-step="1" hidden>
+                <p class="eyebrow">Step 1 of 3</p><h2>Your preferences</h2>
+                <fieldset><legend>Preferred weight unit</legend><label><input type="radio" name="onboarding-unit" value="kg" checked> Kilograms (kg)</label><label><input type="radio" name="onboarding-unit" value="lb"> Pounds (lb)</label></fieldset>
+                <fieldset><legend>Starter split</legend><label><input type="radio" name="onboarding-split" value="ppl" checked> Use the recommended Push/Pull/Legs split</label><label><input type="radio" name="onboarding-split" value="custom"> Create my own split</label></fieldset>
+                <p class="field-help">The recommended rotation is Push, Pull, Legs, then Rest. It rotates by training day rather than being locked to weekdays.</p>
+                <div class="onboarding-split-builder" id="onboarding-split-builder" hidden>
+                    <label class="onboarding-field">Split name<input id="onboarding-split-name" type="text" maxlength="50" value="My Training Split"></label>
+                    <p class="field-help">Add workout and rest days in the order you want them to rotate. You can choose exercises immediately after setup from the Workout screen.</p>
+                    <ol id="onboarding-custom-days"></ol>
+                    <div class="onboarding-builder-actions"><button id="onboarding-add-workout" type="button">+ Workout day</button><button id="onboarding-add-rest" type="button">+ Rest day</button></div>
+                </div>
+            </div>
+            <div class="onboarding-step" data-step="2" hidden>
+                <p class="eyebrow">Step 2 of 3</p><h2>Align the rotation</h2>
+                <label class="onboarding-field">What is scheduled today?<select id="onboarding-position"></select></label>
+                <label class="onboarding-field">Start tracking from<input id="onboarding-start-date" type="date" required></label>
+                <p class="field-help">Choose the workout that matches your real-life schedule today. Future days will rotate automatically. Previous dates will not be marked missed before the tracking date.</p>
+            </div>
+            <div class="onboarding-step" data-step="3" hidden>
+                <p class="eyebrow">Step 3 of 3</p><h2>Workout tools</h2>
+                <fieldset><legend>Timers</legend><label><input id="onboarding-rest-timer" type="checkbox" checked> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label></fieldset>
+            </div>
+            <p class="form-message" id="onboarding-message" role="alert"></p>
+            <footer class="onboarding-actions"><button id="skip-onboarding" type="button">Skip setup</button><div><button id="onboarding-back" type="button" hidden>Back</button><button id="onboarding-next" type="button">Get started</button></div></footer>
+        </form>
+    </dialog>
+
+    <aside class="undo-toast" id="undo-toast" hidden role="status"><span id="undo-message"></span><button id="undo-schedule" type="button">Undo</button></aside>
 
     <dialog class="pr-dialog" id="pr-dialog">
         <div class="pr-celebration">
