@@ -12,6 +12,7 @@
         try {
             const appearance = JSON.parse(localStorage.getItem("liftTrackerAppearance") || "{}");
             if (appearance.mode) document.documentElement.dataset.theme = appearance.mode;
+            document.documentElement.dataset.texture = appearance.texture || "none";
             if (appearance.accent) document.documentElement.style.setProperty("--accent", appearance.accent);
         } catch {}
     </script>
@@ -25,6 +26,7 @@
 <body>
     <main class="app-shell">
         <nav class="view-tabs" aria-label="App sections">
+            <span class="tab-indicator" id="tab-indicator" aria-hidden="true"></span>
             <button class="tab active" type="button" data-view="workout-view">Workout</button>
             <button class="tab" type="button" data-view="calendar-view">Calendar</button>
             <button class="tab" type="button" data-view="progress-view">Progress</button>
@@ -32,30 +34,42 @@
         </nav>
 
         <section class="app-view active" id="workout-view">
-            <header class="page-header">
-                <div>
-                    <p class="eyebrow" id="workout-date-label">Today's workout</p>
-                    <h1 id="workout-title">Push Day</h1>
-                    <p class="rotation-position" id="rotation-position"></p>
+            <header class="workout-hero" id="workout-hero">
+                <div class="hero-glow" aria-hidden="true"></div>
+                <div class="hero-top">
+                    <div>
+                        <p class="eyebrow" id="workout-date-label">Today's workout</p>
+                        <h1 id="workout-title">Push Day</h1>
+                        <p class="rotation-position" id="rotation-position"></p>
+                    </div>
+                    <div class="hero-side">
+                        <div class="hero-progress-ring" id="hero-progress-ring" role="progressbar" aria-label="Workout completion" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="hero-progress-percent">0%</span></div>
+                        <div class="viewed-date"><div class="date" id="workout-date"></div><button id="return-today" type="button" hidden>Return to today</button></div>
+                    </div>
                 </div>
-                <div class="viewed-date">
-                    <div class="date" id="workout-date"></div>
-                    <button id="return-today" type="button" hidden>Return to today</button>
+                <div class="hero-context" id="hero-session-details">
+                    <span><small>Focus</small><strong id="hero-muscle-focus">—</strong></span>
+                    <span><small>Previous session</small><strong id="hero-previous-session">No history yet</strong></span>
+                    <span><small>Plan</small><strong id="hero-workout-plan">—</strong></span>
                 </div>
+                <section class="summary hero-summary" id="workout-summary" aria-label="Workout summary">
+                    <div><strong id="completed-count">0/0</strong><span>Exercises</span></div>
+                    <div><strong id="set-count">0</strong><span>Sets logged</span></div>
+                    <div><strong id="total-volume">0 kg</strong><span>Total volume</span></div>
+                </section>
             </header>
+
+            <section class="goal-attempts" id="goal-attempts" hidden aria-labelledby="goal-attempts-title">
+                <div class="section-heading"><div><p class="eyebrow">PR opportunity</p><h2 id="goal-attempts-title">Strength goal ready</h2></div><span>For this workout</span></div>
+                <div id="goal-attempt-list"></div>
+            </section>
 
             <section class="up-next" aria-labelledby="up-next-heading">
                 <div class="section-heading">
                     <h2 id="up-next-heading">Coming up</h2>
-                    <span>Rotating split</span>
+                    <div class="mini-calendar-controls"><button id="mini-calendar-previous" type="button" aria-label="Previous split rotation">‹</button><span id="mini-calendar-range">Current rotation</span><button id="mini-calendar-next" type="button" aria-label="Next split rotation">›</button></div>
                 </div>
                 <div class="upcoming-days" id="upcoming-days"></div>
-            </section>
-
-            <section class="summary" id="workout-summary" aria-label="Workout summary">
-                <div><strong id="completed-count">0/0</strong><span>Exercises</span></div>
-                <div><strong id="set-count">0</strong><span>Sets logged</span></div>
-                <div><strong id="total-volume">0 kg</strong><span>Total volume</span></div>
             </section>
 
             <section class="muscle-coverage" id="muscle-coverage" aria-labelledby="muscle-coverage-heading">
@@ -143,7 +157,7 @@
                 <section aria-labelledby="exercises-heading">
                 <div class="section-heading">
                     <h2 id="exercises-heading">Exercises</h2>
-                    <button class="edit-exercises" id="edit-exercises" type="button">Edit exercises</button>
+                    <div class="exercise-heading-actions"><button class="copy-last-values" id="copy-last-values" type="button">Copy last values</button><button class="edit-exercises" id="edit-exercises" type="button">Edit exercises</button></div>
                     </div>
                     <div id="exercise-list"></div>
                 </section>
@@ -164,12 +178,13 @@
         </section>
 
         <section class="app-view" id="calendar-view" hidden>
-            <header class="calendar-header">
+            <header class="calendar-header view-hero">
+                <div class="view-hero-glow" aria-hidden="true"></div>
                 <div>
                     <p class="eyebrow">Training history</p>
                     <h1>Calendar</h1>
                 </div>
-                <button class="today-button" id="today-button" type="button">Today</button>
+                <div class="calendar-hero-actions"><div class="calendar-streak" title="Consecutive scheduled workouts completed"><span aria-hidden="true">🔥</span><div><strong id="calendar-streak-count">0</strong><small>workout streak</small></div></div><button class="today-button" id="today-button" type="button">Today</button></div>
             </header>
 
             <div class="calendar-controls">
@@ -183,6 +198,21 @@
                 <span>Fri</span><span>Sat</span><span>Sun</span>
             </div>
             <div class="calendar-grid" id="calendar-grid"></div>
+
+            <section class="calendar-day-detail" id="calendar-day-detail" aria-live="polite">
+                <div class="calendar-detail-accent" aria-hidden="true"></div>
+                <header>
+                    <div><span class="calendar-status-badge" id="calendar-detail-status">Planned</span><h2 id="calendar-detail-title">Push Day</h2><p id="calendar-detail-date"></p></div>
+                    <button id="calendar-view-workout" type="button">View workout</button>
+                </header>
+                <div class="calendar-detail-stats" id="calendar-detail-stats"></div>
+                <div class="calendar-detail-exercises" id="calendar-detail-exercises"></div>
+            </section>
+
+            <section class="recap-library-card" aria-labelledby="recap-library-title">
+                <div class="section-heading"><div><p class="eyebrow">Saved automatically</p><h2 id="recap-library-title">Weekly / split recaps</h2></div><span id="recap-count">0 saved</span></div>
+                <div class="recap-library" id="recap-library"><p class="empty-history">Your first recap will appear after a week or at the end of your split.</p></div>
+            </section>
 
             <div class="calendar-legend">
                 <span><i class="legend-dot complete"></i> Complete</span>
@@ -217,7 +247,8 @@
         </section>
 
         <section class="app-view" id="progress-view" hidden>
-            <header class="progress-header">
+            <header class="progress-header view-hero">
+                <div class="view-hero-glow" aria-hidden="true"></div>
                 <div>
                     <p class="eyebrow">Strength analytics</p>
                     <h1>Progress</h1>
@@ -248,10 +279,13 @@
                     <span class="graph-zoom-controls">
                         <button id="graph-zoom-in" type="button" aria-label="Zoom in to a shorter date range">−</button>
                         <select id="graph-range">
+                            <option value="7">Last 7 days</option>
+                            <option value="14">Last 14 days</option>
                             <option value="30">Last 30 days</option>
                             <option value="90" selected>Last 3 months</option>
                             <option value="180">Last 6 months</option>
                             <option value="365">Last year</option>
+                            <option value="730">Last 2 years</option>
                             <option value="all">All time</option>
                         </select>
                         <button id="graph-zoom-out" type="button" aria-label="Zoom out to a longer date range">+</button>
@@ -285,7 +319,7 @@
                     <p class="chart-empty" id="chart-empty">Complete workouts to build your progress graph.</p>
                 </div>
                 <div class="graph-legend" aria-label="Graph legend"><span><i class="strength"></i> Selected lift</span><span><i class="bodyweight"></i> Bodyweight</span><span><i class="phase"></i> Cut, maintain or bulk phase</span></div>
-                <p class="graph-explanation">Combined view normalises each series to show their direction of change. Choose Strength only or Bodyweight only to see actual values on the vertical axis. Estimated 1RM is a formula-based estimate, not a guaranteed maximum attempt.</p>
+                <p class="graph-explanation">Combined view plots bodyweight and the selected lift’s estimated 1RM together using actual <span class="unit-label">kg</span> values. The metric selector applies to Strength-only view. Estimated 1RM is formula-based and is not a guaranteed maximum attempt.</p>
             </section>
 
             <section class="phase-card" data-progress-section="phases">
@@ -301,7 +335,7 @@
             </section>
 
             <section class="goals-card" data-progress-section="goals">
-                <div class="section-heading"><h2>Strength goals</h2><span>Track PR readiness</span></div>
+                <div class="section-heading"><h2>Strength goals</h2><div class="goal-heading-actions"><span>Track PR readiness</span><button id="open-achieved-goals" type="button">Past achievements</button></div></div>
                 <form class="goal-form" id="goal-form">
                     <label>Exercise <select id="goal-exercise"></select></label>
                     <label><span>Goal weight (<span class="unit-label">kg</span>)</span><input id="goal-weight" type="number" min="0" step="0.5" required></label>
@@ -419,7 +453,8 @@
                     <div class="exercise-catalog" id="exercise-catalog"></div>
                 </section>
                 <aside class="selected-panel">
-                    <h3>Selected <span id="selected-count">0</span></h3>
+                    <h3>Rearrange selected exercises <span id="selected-count">0</span></h3>
+                    <p>Use the arrows to set their workout order.</p>
                     <ol class="selected-exercises" id="selected-exercises"></ol>
                 </aside>
             </div>
@@ -436,8 +471,8 @@
                 <p class="inline-message" id="custom-exercise-message"></p>
             </details>
 
-            <section class="change-scope">
-                <h3>Apply these changes</h3>
+            <details class="change-scope" id="change-scope-details" open>
+                <summary>Apply these changes <span id="scope-summary">All current and future rotations</span></summary>
                 <div class="scope-options">
                     <label><input type="radio" name="change-scope" value="future" checked> All current and future rotations</label>
                     <label><input type="radio" name="change-scope" value="once"> This workout only</label>
@@ -448,7 +483,7 @@
                     <label>From <input id="range-start" type="date"></label>
                     <label>To <input id="range-end" type="date"></label>
                 </div>
-            </section>
+            </details>
 
             <footer class="catalog-footer">
                 <p id="catalog-message" role="status"></p>
@@ -512,11 +547,27 @@
                     </div>
                 </fieldset>
                 <fieldset>
+                    <legend>Background texture</legend>
+                    <div class="mode-options texture-options">
+                        <label><input type="radio" name="background-texture" value="none"> None</label>
+                        <label><input type="radio" name="background-texture" value="grid"> Grid</label>
+                        <label><input type="radio" name="background-texture" value="grain"> Grain</label>
+                        <label><input type="radio" name="background-texture" value="glow"> Soft glow</label>
+                    </div>
+                </fieldset>
+                <fieldset>
                     <legend>Workout tools</legend>
                     <div class="tool-toggles">
                         <label><input id="show-rest-timer" type="checkbox"> Show floating rest timer</label>
                         <label><input id="show-session-timer" type="checkbox"> Show session length timer</label>
+                        <label><input id="show-exercise-rest" type="checkbox"> Show suggested rest time on each exercise</label>
                     </div>
+                </fieldset>
+                <fieldset>
+                    <legend>Training recaps</legend>
+                    <div class="tool-toggles"><label><input id="show-recap-popup" type="checkbox"> Automatically show a recap popup</label></div>
+                    <label class="settings-select">Show it <select id="recap-timing"><option value="weekly">At the end of each week</option><option value="split-end">After the final workout in each split</option><option value="split-rest">On the rest day at the end of a split</option></select></label>
+                    <p class="field-help">Recaps are saved either way, so you can reopen and compare them from Calendar.</p>
                 </fieldset>
                 <fieldset>
                     <legend>Units</legend>
@@ -567,7 +618,7 @@
                 <div class="beginner-note"><strong>How progress estimates work</strong><p>Estimated 1RM predicts a possible one-repetition maximum from a lighter set. Treat it as a progress estimate—not a requirement to attempt a heavy lift. Training volume is weight × repetitions and is most useful when comparing similar exercises.</p></div>
             </div>
             <div class="onboarding-step" data-step="1" hidden>
-                <p class="eyebrow">Step 1 of 3</p><h2>Your preferences</h2>
+                <p class="eyebrow">Step 1 of 4</p><h2>Your preferences</h2>
                 <fieldset><legend>Preferred weight unit</legend><label><input type="radio" name="onboarding-unit" value="kg" checked> Kilograms (kg)</label><label><input type="radio" name="onboarding-unit" value="lb"> Pounds (lb)</label></fieldset>
                 <fieldset><legend>Starter split</legend><label><input type="radio" name="onboarding-split" value="ppl" checked> Use the recommended Push/Pull/Legs split</label><label><input type="radio" name="onboarding-split" value="custom"> Create my own split</label></fieldset>
                 <p class="field-help">The recommended rotation is Push, Pull, Legs, then Rest. It rotates by training day rather than being locked to weekdays.</p>
@@ -579,14 +630,25 @@
                 </div>
             </div>
             <div class="onboarding-step" data-step="2" hidden>
-                <p class="eyebrow">Step 2 of 3</p><h2>Align the rotation</h2>
+                <p class="eyebrow">Step 2 of 4</p><h2>Align the rotation</h2>
                 <label class="onboarding-field">What is scheduled today?<select id="onboarding-position"></select></label>
                 <label class="onboarding-field">Start tracking from<input id="onboarding-start-date" type="date" required></label>
                 <p class="field-help">Choose the workout that matches your real-life schedule today. Future days will rotate automatically. Previous dates will not be marked missed before the tracking date.</p>
             </div>
             <div class="onboarding-step" data-step="3" hidden>
-                <p class="eyebrow">Step 3 of 3</p><h2>Workout tools</h2>
-                <fieldset><legend>Timers</legend><label><input id="onboarding-rest-timer" type="checkbox" checked> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label></fieldset>
+                <p class="eyebrow">Step 3 of 4 · Optional</p><h2>Set a strength goal</h2>
+                <p>Choose a lift and target if you want Lift Tracker to estimate your progress and highlight it in recaps. You can skip this and add goals later from Progress.</p>
+                <label class="goal-opt-in"><input id="onboarding-goal-enabled" type="checkbox"> I want to set a strength goal now</label>
+                <div id="onboarding-goal-fields" hidden>
+                    <label class="onboarding-field">Exercise<select id="onboarding-goal-exercise"></select></label>
+                    <label class="onboarding-field"><span>Goal weight (<span class="unit-label">kg</span>)</span><input id="onboarding-goal-weight" type="number" min="0" step="0.5"></label>
+                    <label class="onboarding-field">Repetitions<input id="onboarding-goal-reps" type="number" min="1" max="15" value="1"></label>
+                </div>
+            </div>
+            <div class="onboarding-step" data-step="4" hidden>
+                <p class="eyebrow">Step 4 of 4</p><h2>Workout tools</h2>
+                <fieldset><legend>Timers</legend><label><input id="onboarding-rest-timer" type="checkbox" checked> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label><label><input id="onboarding-exercise-rest" type="checkbox"> Show small suggested rest times on exercises</label></fieldset>
+                <fieldset><legend>Recaps</legend><label><input id="onboarding-recap-popup" type="checkbox" checked> Show my saved training recap automatically</label><label class="onboarding-field"><span>Recap timing</span><select id="onboarding-recap-timing"><option value="weekly">End of each week</option><option value="split-end">After the final workout in each split</option><option value="split-rest">On the rest day at the end of a split</option></select></label></fieldset>
             </div>
             <p class="form-message" id="onboarding-message" role="alert"></p>
             <footer class="onboarding-actions"><button id="skip-onboarding" type="button">Skip setup</button><div><button id="onboarding-back" type="button" hidden>Back</button><button id="onboarding-next" type="button">Get started</button></div></footer>
@@ -595,6 +657,34 @@
 
     <aside class="undo-toast" id="undo-toast" hidden role="status"><span id="undo-message"></span><button id="undo-schedule" type="button">Undo</button></aside>
 
+    <dialog class="recap-dialog" id="recap-dialog">
+        <div class="recap-celebration">
+            <header><div><p class="eyebrow" id="recap-kicker">Weekly recap</p><h2 id="recap-title">Your training week</h2><p id="recap-range"></p></div><button class="close-dialog" id="close-recap" type="button" aria-label="Close recap">×</button></header>
+            <div class="recap-summary" id="recap-summary"></div>
+            <section><h3>Highlights</h3><div class="recap-highlights" id="recap-highlights"></div></section>
+            <section><h3>Strength goal progress</h3><div class="recap-goals" id="recap-goals"></div></section>
+            <button class="secondary-settings-action" id="open-recap-compare" type="button">Compare to previous recaps</button>
+            <section class="recap-compare" id="recap-compare" hidden><label>Compare with<select id="recap-compare-select"></select></label><div id="recap-comparison-results"></div></section>
+        </div>
+    </dialog>
+
+    <dialog class="achieved-goals-dialog" id="achieved-goals-dialog">
+        <div class="achieved-goals-shell">
+            <header><div><p class="eyebrow">Milestone history</p><h2>Past PR achievements</h2></div><button class="close-dialog" id="close-achieved-goals" type="button" aria-label="Close past achievements">×</button></header>
+            <div class="achieved-goals-list" id="achieved-goals-list"></div>
+        </div>
+    </dialog>
+
+    <dialog class="goal-achieved-dialog" id="goal-achieved-dialog">
+        <div class="goal-achieved-celebration">
+            <div class="goal-achieved-icon" aria-hidden="true">🏆</div>
+            <p class="eyebrow">Milestone unlocked</p>
+            <h2>Strength goal achieved!</h2>
+            <p id="goal-achieved-message">Good job—your work paid off.</p>
+            <button id="close-goal-achieved" type="button">Celebrate</button>
+        </div>
+    </dialog>
+
     <dialog class="pr-dialog" id="pr-dialog">
         <div class="pr-celebration">
             <div class="pr-icon">🏆</div>
@@ -602,6 +692,18 @@
             <h2 id="pr-title">Strength PR!</h2>
             <div id="pr-records"></div>
             <button id="close-pr" type="button">Continue</button>
+        </div>
+    </dialog>
+
+    <dialog class="completion-dialog" id="completion-dialog">
+        <div class="completion-celebration">
+            <div class="completion-check" aria-hidden="true">✓</div>
+            <p class="eyebrow">Session saved</p>
+            <h2 id="completion-title">Workout complete</h2>
+            <p id="completion-subtitle"></p>
+            <div class="completion-stats" id="completion-stats"></div>
+            <div class="completion-feedback" id="completion-feedback"></div>
+            <button id="close-completion" type="button">Done</button>
         </div>
     </dialog>
 </body>
