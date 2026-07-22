@@ -34,6 +34,7 @@ const AUTOSAVE_KEY = "liftTrackerAutosaveStableV1";
 const RECAPS_KEY = "liftTrackerRecapsV1";
 const RECAP_SHOWN_KEY = "liftTrackerRecapShownV1";
 const REST_TIMER_DEFAULT_MIGRATION_KEY = "liftTrackerRestTimerDefaultOffV1";
+const MACHINE_STARTING_WEIGHTS_KEY = "liftTrackerMachineStartingWeightsV1";
 
 const MUSCLE_COLOURS = {
     Chest: "#ff7568", Back: "#62a8ff", Shoulders: "#ad83ff", Biceps: "#ffad55",
@@ -249,6 +250,28 @@ function workoutForDate(date) {
     };
 }
 
+function draftHasActivity(key) {
+    const draft = loadJSON(DRAFT_PREFIX + key, null);
+    return Array.isArray(draft?.exercises) && draft.exercises.some((exercise) => (
+        exercise.completed || (exercise.sets || []).some((set) => Number(set.weight) > 0 || Number(set.reps) > 0)
+    ));
+}
+
+function recordPastUnloggedMisses() {
+    const start = dateFromKey(state.trackingStartDate);
+    const yesterday = addDays(today, -1);
+    let changed = false;
+    for (let date = start; date <= yesterday; date = addDays(date, 1)) {
+        const key = dateKey(date);
+        if (history[key] || draftHasActivity(key)) continue;
+        const scheduled = workoutForDate(date);
+        if (!scheduled || scheduled.isRest) continue;
+        history[key] = { date: key, status: "missed", split: scheduled.name, splitIndex: scheduled.index, automatic: true };
+        changed = true;
+    }
+    if (changed) saveHistory();
+}
+
 function removeMissedEntriesNowOnRestDays() {
     let changed = false;
     for (let pass = 0; pass < state.split.length + 2; pass += 1) {
@@ -289,12 +312,12 @@ function createSetRow(setNumber, values = {}) {
         <label>
             <span class="visually-hidden">Weight for set ${setNumber}</span>
             <input class="weight-input" type="number" min="0" step="0.5"
-                placeholder="${weightUnit}" value="${values.weight == null || values.weight === "" ? "" : Number(displayWeight(values.weight).toFixed(2))}" aria-label="Weight for set ${setNumber} in ${weightUnit}">
+                placeholder="${weightUnit}" value="${Number(values.weight) > 0 ? Number(displayWeight(values.weight).toFixed(2)) : ""}" aria-label="Weight for set ${setNumber} in ${weightUnit}">
         </label>
         <label>
             <span class="visually-hidden">Reps for set ${setNumber}</span>
             <input class="reps-input" type="number" min="0" step="1"
-                placeholder="reps" value="${values.reps ?? ""}" aria-label="Reps for set ${setNumber}">
+                placeholder="reps" value="${Number(values.reps) > 0 ? Number(values.reps) : ""}" aria-label="Reps for set ${setNumber}">
         </label>
         <button class="remove-set" type="button" aria-label="Remove set">×</button>
     `;
@@ -338,7 +361,44 @@ function suggestedTarget(exercise, previous) {
     const best = sets.reduce((top, set) => set.weight > top.weight || (set.weight === top.weight && set.reps > top.reps) ? set : top, sets[0]);
     const displayIncrease = weightUnit === "lb" ? 5 : exercise.equipment === "Dumbbells" ? 1 : 2.5;
     const increase = storedWeight(displayIncrease);
-    return best.reps >= 10 ? `Try ${formatWeight(best.weight + increase)} for ${Math.max(6, best.reps - 2)}–${best.reps} reps` : `Match ${formatWeight(best.weight)} × ${best.reps}, then add a rep if form stays clean`;
+    if (best.reps === 1) return `Repeat ${formatWeight(best.weight)} × 1 with a controlled rep; do not add a rep just because the single moved well`;
+    if (best.reps <= 5) return `Match ${formatWeight(best.weight)} × ${best.reps}; if every set is clean, add 1 rep only on the final set`;
+    if (best.reps <= 9) return `Aim for ${formatWeight(best.weight)} × ${best.reps + 1}; increase the load after you beat the target by 1–2 clean reps`;
+    if (best.reps <= 12) return `Try ${formatWeight(best.weight + increase)} for ${Math.max(6, best.reps - 2)}–${best.reps - 1} reps`;
+    return `Increase to ${formatWeight(best.weight + increase)} and return to 8–12 controlled reps`;
+}
+
+function isPlateLoadedLegMachine(exercise) {
+    return /hack squat|leg press|sled/i.test(exercise.name) && exercise.equipment !== "Barbell";
+}
+
+function machineLoadCalculator(exercise) {
+    if (!isPlateLoadedLegMachine(exercise)) return "";
+    const savedStarts = loadJSON(MACHINE_STARTING_WEIGHTS_KEY, {});
+    const startingWeight = savedStarts[exercise.id] > 0 ? Number(displayWeight(savedStarts[exercise.id]).toFixed(2)) : "";
+    return `<details class="machine-load-calculator"><summary>Starting weight calculator</summary><div>
+        <label>Machine starting weight (${weightUnit})<input class="machine-starting-weight" type="number" min="0" step="0.5" value="${startingWeight}"></label>
+        <label>Plates added per side (${weightUnit})<input class="machine-plates-per-side" type="number" min="0" step="0.5" placeholder="0"></label>
+        <p class="machine-load-result">Enter the machine's starting resistance and plates.</p>
+        <button class="use-machine-load" type="button">Use total for empty sets</button>
+    </div></details>`;
+}
+
+function syncExerciseCompletion(card) {
+    const rows = [...card.querySelectorAll(".set-row")];
+    const checkbox = card.querySelector(".exercise-complete");
+    const allFilled = rows.length > 0 && rows.every((row) => (
+        Number(row.querySelector(".weight-input").value) > 0 && Number(row.querySelector(".reps-input").value) > 0
+    ));
+    if (allFilled && !checkbox.checked) {
+        checkbox.checked = true;
+        checkbox.dataset.autoCompleted = "true";
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    } else if (!allFilled && checkbox.dataset.autoCompleted === "true") {
+        checkbox.checked = false;
+        delete checkbox.dataset.autoCompleted;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    }
 }
 
 function plateResult(total, bar) {
@@ -404,6 +464,7 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
         <div class="sets-list"></div>
         <div class="exercise-card-tools"><button class="add-set" type="button">+ Add set</button>${savedAppearance.showExerciseRest === true ? `<button class="exercise-rest-suggestion" type="button" data-seconds="${restSeconds}">Suggested rest ${Math.floor(restSeconds / 60)}:${String(restSeconds % 60).padStart(2, "0")}</button>` : ""}</div>
         ${exercise.equipment === "Barbell" && savedAppearance.showPlateCalculator === true ? `<details class="plate-calculator"><summary>Plate calculator</summary><div><label>Total weight (${weightUnit})<input class="plate-total" type="number" min="0" step="0.5" value="${targetWeight ? Number(displayWeight(targetWeight).toFixed(2)) : ""}"></label><label>Bar (${weightUnit})<input class="plate-bar" type="number" min="0" step="0.5" value="${weightUnit === "lb" ? 45 : 20}"></label><p class="plate-result">Enter a target weight.</p></div></details>` : ""}
+        ${machineLoadCalculator(exercise)}
         ${savedAppearance.showExerciseNotes === true ? `<details class="exercise-notes"><summary>Exercise notes</summary><textarea maxlength="500" placeholder="Setup, form cues, seat position…">${escapeHTML(notes[exercise.id] || savedExercise.note || "")}</textarea></details>` : ""}
     `;
 
@@ -411,7 +472,12 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
     const savedSets = savedExercise.sets?.length ? savedExercise.sets : [{}, {}, {}];
     savedSets.forEach((set, index) => setsContainer.append(createSetRow(index + 1, set)));
     updateSetPBs(card, exercise.id, referenceDate);
-    setsContainer.addEventListener("input", () => updateSetPBs(card, exercise.id, referenceDate));
+    setsContainer.addEventListener("input", () => {
+        updateSetPBs(card, exercise.id, referenceDate);
+        syncExerciseCompletion(card);
+        saveDraft();
+        updateSummary();
+    });
     card.querySelector(".add-set").addEventListener("click", () => {
         setsContainer.append(createSetRow(setsContainer.children.length + 1));
         saveDraft();
@@ -437,6 +503,31 @@ function createExerciseCard(exercise, savedExercise = {}, referenceDate = viewed
     };
     card.querySelectorAll(".plate-calculator input").forEach((input) => input.addEventListener("input", updatePlates));
     updatePlates();
+    const updateMachineLoad = () => {
+        const starting = Number(card.querySelector(".machine-starting-weight")?.value) || 0;
+        const perSide = Number(card.querySelector(".machine-plates-per-side")?.value) || 0;
+        const total = starting + perSide * 2;
+        const result = card.querySelector(".machine-load-result");
+        if (result) result.textContent = total > 0 ? `Total load: ${total.toFixed(total % 1 ? 1 : 0)} ${weightUnit}` : "Enter the machine's starting resistance and plates.";
+        if (starting > 0) {
+            const savedStarts = loadJSON(MACHINE_STARTING_WEIGHTS_KEY, {});
+            savedStarts[exercise.id] = storedWeight(starting);
+            localStorage.setItem(MACHINE_STARTING_WEIGHTS_KEY, JSON.stringify(savedStarts));
+        }
+        return total;
+    };
+    card.querySelectorAll(".machine-load-calculator input").forEach((input) => input.addEventListener("input", updateMachineLoad));
+    card.querySelector(".use-machine-load")?.addEventListener("click", () => {
+        const total = updateMachineLoad();
+        if (total <= 0) return;
+        card.querySelectorAll(".weight-input").forEach((input) => { if (!Number(input.value)) input.value = total; });
+        card.querySelector(".machine-load-calculator")?.removeAttribute("open");
+        syncExerciseCompletion(card);
+        saveDraft();
+        updateSummary();
+        navigator.vibrate?.(10);
+    });
+    updateMachineLoad();
     const noteInput = card.querySelector(".exercise-notes textarea");
     noteInput?.addEventListener("input", () => {
         const savedNotes = loadJSON(EXERCISE_NOTES_KEY, {});
@@ -676,6 +767,13 @@ function copyLastWorkoutValues() {
         updateSummary();
         statusMessage.textContent = `Copied previous set values for ${copied} exercise${copied === 1 ? "" : "s"}.`;
     } else statusMessage.textContent = "No previous workout values are available to copy yet.";
+    const button = document.querySelector("#copy-last-values");
+    button.classList.remove("copy-clicked");
+    void button.offsetWidth;
+    button.classList.add("copy-clicked");
+    setTimeout(() => button.classList.remove("copy-clicked"), 420);
+    button.blur();
+    navigator.vibrate?.(10);
 }
 
 document.querySelector("#copy-last-values").addEventListener("click", copyLastWorkoutValues);
@@ -770,7 +868,7 @@ function renderCalendarDayDetail(date) {
         const validSets = entry.exercises.flatMap((exercise) => exercise.sets || []).filter((set) => set.weight > 0 && set.reps > 0);
         const completed = entry.exercises.filter((exercise) => exercise.completed).length;
         stats.innerHTML = `<div><strong>${completed}/${entry.exercises.length}</strong><span>Exercises</span></div><div><strong>${validSets.length}</strong><span>Sets</span></div><div><strong>${formatVolume(workoutVolume(entry))}</strong><span>Volume</span></div>${entry.sessionDurationSeconds ? `<div><strong>${formatSessionTime(entry.sessionDurationSeconds)}</strong><span>Duration</span></div>` : ""}`;
-        exercises.innerHTML = entry.exercises.map((exercise) => `<span>${escapeHTML(exercise.name)}</span>`).join("");
+        exercises.innerHTML = `${entry.sessionNote ? `<p class="saved-session-note"><strong>Session note</strong>${escapeHTML(entry.sessionNote)}</p>` : ""}${entry.exercises.map((exercise) => `<span>${escapeHTML(exercise.name)}</span>`).join("")}`;
         document.querySelector("#calendar-view-workout").textContent = "View logged workout";
     } else if (scheduled.isRest) {
         stats.innerHTML = '<p>Recovery is part of the rotation. Skip it from the Workout page if you feel ready to train.</p>';
@@ -899,25 +997,27 @@ function showRecap(recap) {
     if (!dialog.open) dialog.showModal();
 }
 
-function createDueRecap(showPopup = false) {
+function createDueRecap(showPopup = false, referenceDate = today) {
     const timing = savedAppearance.recapTiming === "split" ? "split-rest" : savedAppearance.recapTiming || "weekly";
-    let dueDate = timing === "weekly" ? (today.getDay() === 0 ? today : addDays(today, -today.getDay())) : null;
+    const reference = startOfDay(referenceDate);
+    let dueDate = timing === "weekly" ? (reference.getDay() === 0 ? reference : addDays(reference, -reference.getDay())) : null;
     if (timing === "split-rest") {
         for (let offset = 0; offset <= Math.max(state.split.length, 7); offset += 1) {
-            const candidate = addDays(today, -offset);
+            const candidate = addDays(reference, -offset);
             if (workoutForDate(candidate)?.isRest) { dueDate = candidate; break; }
         }
     }
     if (timing === "split-end") {
-        for (let offset = 0; offset <= Math.max(state.split.length, 7); offset += 1) {
-            const candidate = addDays(today, -offset);
-            if (!workoutForDate(candidate)?.isRest && workoutForDate(addDays(candidate, 1))?.isRest) { dueDate = candidate; break; }
-        }
+        const finalWorkoutIndex = state.split.reduce((lastIndex, day, index) => day.isRest ? lastIndex : index, -1);
+        const scheduled = workoutForDate(reference);
+        const completedFinalDay = history[dateKey(reference)]?.status === "complete"
+            && scheduled?.index === finalWorkoutIndex;
+        if (completedFinalDay) dueDate = reference;
     }
     if (!dueDate || dueDate < dateFromKey(state.trackingStartDate)) return;
     const recapId = `${timing}-${dateKey(dueDate)}`;
     const existing = loadJSON(RECAPS_KEY, []).find((saved) => saved.id === recapId);
-    const recap = existing && dateKey(dueDate) !== dateKey(today) ? existing : saveRecap(buildRecap(timing, dueDate));
+    const recap = existing && dateKey(dueDate) !== dateKey(reference) ? existing : saveRecap(buildRecap(timing, dueDate));
     renderRecapLibrary();
     const shown = loadJSON(RECAP_SHOWN_KEY, []);
     if (showPopup && savedAppearance.showRecapPopup && !shown.includes(recap.id)) {
@@ -934,6 +1034,7 @@ document.querySelector("#close-recap").addEventListener("click", () => document.
 document.querySelector("#close-goal-achieved").addEventListener("click", () => {
     document.querySelector("#goal-achieved-dialog").close();
     document.body.classList.remove("goal-achievement-flash");
+    createDueRecap(true, currentCompletionDate ? dateFromKey(currentCompletionDate) : today);
 });
 document.querySelector("#open-recap-compare").addEventListener("click", () => { document.querySelector("#recap-compare").hidden = false; });
 document.querySelector("#recap-compare-select").addEventListener("change", (event) => {
@@ -1008,6 +1109,58 @@ function renderRecords(sessions) {
     setRecord("record-weight", "record-weight-date", bestRecord(sessions, "maxWeight"), "maxWeight");
     setRecord("record-set-volume", "record-set-volume-date", bestRecord(sessions, "bestSetVolume"), "bestSetVolume");
     setRecord("record-reps", "record-reps-date", bestRecord(sessions, "maxReps"), "maxReps", "reps");
+}
+
+function renderRepPRs(sessions) {
+    const targets = [1, 3, 5, 8, 10, 12];
+    document.querySelector("#rep-pr-grid").innerHTML = targets.map((reps) => {
+        const best = sessions.flatMap((session) => session.sets.map((set) => ({ ...set, date: session.date })))
+            .filter((set) => set.reps === reps)
+            .reduce((current, set) => !current || set.weight > current.weight ? set : current, null);
+        return `<article class="rep-pr${best ? " has-pr" : ""}"><span>${reps}RM</span><strong>${best ? formatWeight(best.weight) : "—"}</strong><small>${best ? formatShortDate(best.date) : "Not logged yet"}</small></article>`;
+    }).join("");
+}
+
+function renderExerciseProgress(sessions, exerciseId) {
+    const container = document.querySelector("#exercise-progress-summary");
+    const exercise = catalogById.get(exerciseId);
+    if (!sessions.length) {
+        container.innerHTML = '<p class="empty-history">Complete this exercise twice to see its progress story.</p>';
+        return;
+    }
+    const first = sessions[0];
+    const latest = sessions.at(-1);
+    const best = bestRecord(sessions, "estimated1RM");
+    const strengthChange = first.estimated1RM > 0 ? (latest.estimated1RM - first.estimated1RM) / first.estimated1RM * 100 : 0;
+    const volumeChange = first.volume > 0 ? (latest.volume - first.volume) / first.volume * 100 : 0;
+    const trendClass = strengthChange > 0.5 ? "positive" : strengthChange < -0.5 ? "negative" : "neutral";
+    const signed = (value) => `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+    container.innerHTML = `<div class="exercise-progress-lead"><span>${escapeHTML(exercise?.name || "Exercise")}</span><strong class="${trendClass}">${signed(strengthChange)}</strong><small>estimated strength since ${formatShortDate(first.date)}</small></div>
+        <div class="exercise-progress-stats"><article><span>Started</span><strong>${formatWeight(first.estimated1RM)}</strong><small>estimated 1RM</small></article><article><span>Latest</span><strong>${formatWeight(latest.estimated1RM)}</strong><small>${formatShortDate(latest.date)}</small></article><article><span>All-time best</span><strong>${formatWeight(best.estimated1RM)}</strong><small>${formatShortDate(best.date)}</small></article><article><span>Session volume</span><strong class="${volumeChange >= 0 ? "positive" : "negative"}">${signed(volumeChange)}</strong><small>first to latest</small></article></div>`;
+}
+
+function renderMuscleHeatmap() {
+    const weeks = Array.from({ length: 8 }, (_, index) => startOfWeek(addDays(today, -(7 - index) * 7)));
+    const totals = new Map();
+    const addSets = (muscle, weekIndex, amount) => {
+        const key = canonicalMuscle(muscle);
+        if (!totals.has(key)) totals.set(key, Array(8).fill(0));
+        totals.get(key)[weekIndex] += amount;
+    };
+    weeks.forEach((start, weekIndex) => {
+        workoutsInRange(start, addDays(start, 6)).forEach((workout) => workout.exercises.forEach((exercise) => {
+            const sets = (exercise.sets || []).filter((set) => set.weight > 0 && set.reps > 0).length;
+            if (!sets) return;
+            addSets(exercise.primaryMuscle, weekIndex, sets);
+            (exercise.secondaryMuscles || []).forEach((muscle) => addSets(muscle, weekIndex, sets * 0.5));
+        }));
+    });
+    const rows = [...totals].filter(([, values]) => values.some(Boolean)).sort((a, b) => b[1].reduce((x, y) => x + y, 0) - a[1].reduce((x, y) => x + y, 0));
+    const labels = weeks.map((week, index) => `<span class="heatmap-week${index === 7 ? " current" : ""}">${new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" }).format(week)}</span>`).join("");
+    const level = (sets) => sets <= 0 ? 0 : sets < 4 ? 1 : sets < 8 ? 2 : sets < 12 ? 3 : 4;
+    document.querySelector("#muscle-heatmap").innerHTML = rows.length
+        ? `<div class="heatmap-grid heatmap-header"><span>Muscle</span>${labels}</div>${rows.map(([muscle, values]) => `<div class="heatmap-grid"><strong>${escapeHTML(muscle)}</strong>${values.map((sets, index) => `<i data-level="${level(sets)}" title="${escapeHTML(muscle)} · week of ${formatShortDate(dateKey(weeks[index]))}: ${sets.toFixed(1)} sets"><b>${sets ? sets.toFixed(sets % 1 ? 1 : 0) : ""}</b></i>`).join("")}</div>`).join("")}`
+        : '<p class="empty-history">Complete workouts to build your muscle consistency heatmap.</p>';
 }
 
 const metricDetails = {
@@ -1150,7 +1303,7 @@ function renderRecentWorkouts() {
         const sets = workout.exercises.flatMap((exercise) => exercise.sets).filter((set) => set.weight > 0 && set.reps > 0);
         const volume = sets.reduce((sum, set) => sum + set.weight * set.reps, 0);
         const duration = workout.sessionDurationSeconds > 0 ? ` · ${formatSessionTime(workout.sessionDurationSeconds)}` : "";
-        return `<article class="recent-workout"><div><strong>${escapeHTML(workout.split)} Day</strong><small>${formatShortDate(workout.date)}</small></div><div class="recent-workout-stats">${sets.length} sets · ${formatVolume(volume)}${duration}</div></article>`;
+        return `<article class="recent-workout"><div><strong>${escapeHTML(workout.split)} Day</strong><small>${formatShortDate(workout.date)}</small></div><div class="recent-workout-stats">${sets.length} sets · ${formatVolume(volume)}${duration}</div>${workout.sessionNote ? `<p class="recent-session-note">${escapeHTML(workout.sessionNote)}</p>` : ""}</article>`;
     }).join("") + progressMoreButton("recent", workouts.length);
     container.querySelector(".progress-show-more")?.addEventListener("click", () => { progressListLimits.recent += 5; renderRecentWorkouts(); });
 }
@@ -1463,10 +1616,11 @@ function renderWorkoutGoalAttempts(scheduled, isToday, isRest) {
 
 const progressSections = {
     overview: "Training overview", records: "Personal records", graph: "Main graph", phases: "Training phases", goals: "Strength goals",
+    "exercise-progress": "Exercise progress cards", "rep-prs": "Rep PRs", "muscle-heatmap": "Muscle consistency heatmap",
     history: "Exercise history", compounds: "Compound strength", "rep-performance": "Best performance by reps", "muscle-volume": "Muscle volume",
     comparison: "Date comparison", bodyweight: "Bodyweight", programming: "Split analysis", recent: "Recent workouts"
 };
-const defaultProgressSections = new Set(["overview", "records", "graph", "goals", "history", "bodyweight", "programming", "recent"]);
+const defaultProgressSections = new Set(["overview", "records", "exercise-progress", "rep-prs", "muscle-heatmap", "graph", "goals", "history", "bodyweight", "programming", "recent"]);
 
 function progressLayoutState() {
     const saved = loadJSON(PROGRESS_LAYOUT_KEY, {});
@@ -1511,6 +1665,9 @@ function renderProgress() {
     const exerciseId = document.querySelector("#progress-exercise").value;
     const sessions = exerciseId ? sessionsForExercise(exerciseId) : [];
     renderRecords(sessions);
+    renderExerciseProgress(sessions, exerciseId);
+    renderRepPRs(sessions);
+    renderMuscleHeatmap();
     renderProgressChart(sessions);
     renderExerciseHistory(sessions);
     renderRecentWorkouts();
@@ -1681,6 +1838,7 @@ function showPRCelebration(records) {
 
 let pendingCompletionPRs = [];
 let pendingStrengthGoals = [];
+let currentCompletionDate = null;
 
 function workoutCompletionFeedback(workout) {
     const comments = workout.exercises.flatMap((exercise) => {
@@ -1705,6 +1863,7 @@ function showWorkoutCompletion(workout, personalRecords = []) {
     const completedExercises = workout.exercises.filter((exercise) => exercise.completed).length;
     const volume = validSets.reduce((sum, set) => sum + set.weight * set.reps, 0);
     pendingCompletionPRs = personalRecords;
+    currentCompletionDate = workout.date;
     document.querySelector("#completion-title").textContent = `${workout.split} complete`;
     document.querySelector("#completion-subtitle").textContent = personalRecords.length
         ? `${personalRecords.length} personal record${personalRecords.length === 1 ? "" : "s"} achieved — details next.`
@@ -1715,6 +1874,8 @@ function showWorkoutCompletion(workout, personalRecords = []) {
         <div><strong>${formatVolume(volume)}</strong><span>Volume</span></div>`;
     const feedback = workoutCompletionFeedback(workout);
     document.querySelector("#completion-feedback").innerHTML = feedback.length ? `<h3>Session notes</h3>${feedback.map((comment) => `<p>${escapeHTML(comment)}</p>`).join("")}` : "";
+    document.querySelector("#completion-session-note").value = workout.sessionNote || "";
+    document.querySelector("#completion-note-status").textContent = "Saved with this workout";
     document.querySelector("#completion-dialog").showModal();
     if (navigator.vibrate) navigator.vibrate([18, 45, 28]);
 }
@@ -1725,7 +1886,7 @@ document.querySelector("#close-pr").addEventListener("click", () => {
         const goals = pendingStrengthGoals;
         pendingStrengthGoals = [];
         showStrengthGoalCelebration(goals);
-    } else createDueRecap(true);
+    } else createDueRecap(true, currentCompletionDate ? dateFromKey(currentCompletionDate) : today);
 });
 document.querySelector("#close-completion").addEventListener("click", () => {
     document.querySelector("#completion-dialog").close();
@@ -1736,7 +1897,14 @@ document.querySelector("#close-completion").addEventListener("click", () => {
         const goals = pendingStrengthGoals;
         pendingStrengthGoals = [];
         showStrengthGoalCelebration(goals);
-    } else createDueRecap(true);
+    } else createDueRecap(true, currentCompletionDate ? dateFromKey(currentCompletionDate) : today);
+});
+
+document.querySelector("#completion-session-note").addEventListener("input", (event) => {
+    if (!currentCompletionDate || history[currentCompletionDate]?.status !== "complete") return;
+    history[currentCompletionDate].sessionNote = event.target.value.trim();
+    saveHistory();
+    document.querySelector("#completion-note-status").textContent = "Saved";
 });
 
 function collectBackupData() {
@@ -1867,11 +2035,12 @@ workoutForm.addEventListener("submit", (event) => {
     pendingStrengthGoals = strengthGoalsHitByWorkout(workout);
     localStorage.removeItem(DRAFT_PREFIX + dateKey(viewedDate));
     renderWorkout();
+    window.scrollTo({ top: 0, behavior: "smooth" });
     statusMessage.textContent = viewedDate < today
         ? "Past workout saved — calendar marked green."
         : "Workout completed — calendar marked green.";
     showWorkoutCompletion(workout, personalRecords);
-    createDueRecap(false);
+    createDueRecap(false, viewedDate);
 });
 
 document.querySelector("#miss-workout").addEventListener("click", () => {
@@ -2787,6 +2956,7 @@ document.querySelectorAll('input[name="change-scope"]').forEach((radio) => {
 
 populateCatalogFilters();
 
+recordPastUnloggedMisses();
 saveState();
 renderWorkout();
 if (!localStorage.getItem(ONBOARDING_KEY)) setTimeout(openOnboarding, 0);

@@ -81,8 +81,8 @@
                     <div class="muscle-diagrams" aria-label="Front and back muscle coverage diagrams">
                         <figure>
                             <svg class="body-map" viewBox="0 0 180 360" role="img" aria-label="Front muscle diagram">
-                                <circle class="body-base" cx="90" cy="32" r="22"/>
-                                <path class="body-base" d="M65 58 Q90 50 115 58 L128 158 L112 218 L106 338 H76 L68 218 L52 158 Z"/>
+                                <circle class="body-base" cx="90" cy="30" r="20"/>
+                                <path class="body-base" d="M82 50H98L103 61Q119 63 128 75L143 101 137 111 124 94 120 157 108 190 106 216 113 274 106 340H91L87 224H83L78 340H63L67 274 72 216 70 190 58 157 56 94 43 111 37 101 52 75Q61 63 77 61Z"/>
                                 <path class="muscle-zone" data-muscle="Shoulders" d="M61 66 Q43 72 40 96 L59 103 72 78Z"><title>Shoulders</title></path>
                                 <path class="muscle-zone" data-muscle="Shoulders" d="M119 66 Q137 72 140 96 L121 103 108 78Z"><title>Shoulders</title></path>
                                 <path class="muscle-zone" data-muscle="Chest" d="M70 76 Q89 68 89 112 L62 108Z"><title>Chest</title></path>
@@ -103,8 +103,8 @@
                         </figure>
                         <figure>
                             <svg class="body-map" viewBox="0 0 180 360" role="img" aria-label="Back muscle diagram">
-                                <circle class="body-base" cx="90" cy="32" r="22"/>
-                                <path class="body-base" d="M65 58 Q90 50 115 58 L128 158 L112 218 L106 338 H76 L68 218 L52 158 Z"/>
+                                <circle class="body-base" cx="90" cy="30" r="20"/>
+                                <path class="body-base" d="M82 50H98L103 61Q119 63 128 75L143 101 137 111 124 94 120 157 108 190 106 216 113 274 106 340H91L87 224H83L78 340H63L67 274 72 216 70 190 58 157 56 94 43 111 37 101 52 75Q61 63 77 61Z"/>
                                 <path class="muscle-zone" data-muscle="Traps" d="M72 58 L90 78 108 58 112 92 68 92Z"><title>Traps</title></path>
                                 <path class="muscle-zone" data-muscle="Rear Delts" d="M64 68 Q43 74 40 98 L60 102 73 82Z"><title>Rear delts</title></path>
                                 <path class="muscle-zone" data-muscle="Rear Delts" d="M116 68 Q137 74 140 98 L120 102 107 82Z"><title>Rear delts</title></path>
@@ -307,6 +307,22 @@
                 <article><span>Heaviest weight</span><strong id="record-weight">—</strong><small id="record-weight-date"></small></article>
                 <article><span>Best set volume</span><strong id="record-set-volume">—</strong><small id="record-set-volume-date"></small></article>
                 <article><span>Most reps</span><strong id="record-reps">—</strong><small id="record-reps-date"></small></article>
+            </section>
+
+            <section class="exercise-progress-card" data-progress-section="exercise-progress">
+                <div class="section-heading"><h2>Exercise progress</h2><span>Selected exercise</span></div>
+                <div class="exercise-progress-summary" id="exercise-progress-summary"></div>
+            </section>
+
+            <section class="rep-pr-card" data-progress-section="rep-prs">
+                <div class="section-heading"><h2>Rep PRs</h2><span>Best weight at each target</span></div>
+                <div class="rep-pr-grid" id="rep-pr-grid"></div>
+            </section>
+
+            <section class="muscle-heatmap-card" data-progress-section="muscle-heatmap">
+                <div class="section-heading"><h2>Muscle consistency</h2><span>Working sets · last 8 weeks</span></div>
+                <div class="muscle-heatmap-wrap" id="muscle-heatmap"></div>
+                <div class="heatmap-legend"><span>Fewer sets</span><i data-level="1"></i><i data-level="2"></i><i data-level="3"></i><i data-level="4"></i><span>More sets</span></div>
             </section>
 
             <section class="chart-card" data-progress-section="graph">
@@ -570,7 +586,7 @@
                 <fieldset>
                     <legend>Training recaps</legend>
                     <div class="tool-toggles"><label><input id="show-recap-popup" type="checkbox"> Automatically show a recap popup</label></div>
-                    <label class="settings-select">Show it <select id="recap-timing"><option value="weekly">At the end of each week</option><option value="split-end">After the final workout in each split</option><option value="split-rest">On the rest day at the end of a split</option></select></label>
+                    <label class="settings-select">Show it <select id="recap-timing"><option value="weekly">At the end of each week</option><option value="split-end">When the last workout of the split is complete</option><option value="split-rest">On the rest day at the end of a split</option></select></label>
                     <p class="field-help">Recaps are saved either way, so you can reopen and compare them from Calendar.</p>
                 </fieldset>
                 <fieldset>
@@ -652,7 +668,7 @@
             <div class="onboarding-step" data-step="4" hidden>
                 <p class="eyebrow">Step 4 of 4</p><h2>Workout tools</h2>
                 <fieldset><legend>Workout tools</legend><label><input id="onboarding-rest-timer" type="checkbox"> Show the floating rest timer between sets</label><label><input id="onboarding-session-timer" type="checkbox"> Show the full session-length timer</label><label><input id="onboarding-exercise-rest" type="checkbox"> Show small suggested rest times on exercises</label><label><input id="onboarding-exercise-notes" type="checkbox"> Show exercise notes</label><label><input id="onboarding-plate-calculator" type="checkbox"> Show barbell plate calculators</label></fieldset>
-                <fieldset><legend>Recaps</legend><label><input id="onboarding-recap-popup" type="checkbox" checked> Show my saved training recap automatically</label><label class="onboarding-field"><span>Recap timing</span><select id="onboarding-recap-timing"><option value="weekly">End of each week</option><option value="split-end">After the final workout in each split</option><option value="split-rest">On the rest day at the end of a split</option></select></label></fieldset>
+                <fieldset><legend>Recaps</legend><label><input id="onboarding-recap-popup" type="checkbox" checked> Show my saved training recap automatically</label><label class="onboarding-field"><span>Recap timing</span><select id="onboarding-recap-timing"><option value="weekly">End of each week</option><option value="split-end">When the last workout of the split is complete</option><option value="split-rest">On the rest day at the end of a split</option></select></label></fieldset>
             </div>
             <p class="form-message" id="onboarding-message" role="alert"></p>
             <footer class="onboarding-actions"><button id="skip-onboarding" type="button">Skip setup</button><div><button id="onboarding-back" type="button" hidden>Back</button><button id="onboarding-next" type="button">Get started</button></div></footer>
@@ -707,6 +723,11 @@
             <p id="completion-subtitle"></p>
             <div class="completion-stats" id="completion-stats"></div>
             <div class="completion-feedback" id="completion-feedback"></div>
+            <label class="session-note-editor" for="completion-session-note">
+                <span>How did the session feel?</span>
+                <textarea id="completion-session-note" maxlength="300" placeholder="e.g. Light workout, low energy, shoulder felt great…"></textarea>
+                <small id="completion-note-status">Saved with this workout</small>
+            </label>
             <button id="close-completion" type="button">Done</button>
         </div>
     </dialog>
